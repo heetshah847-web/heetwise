@@ -22,4 +22,9 @@ export const env = {
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
+  // Auth rate limit is configurable so tests can widen it; defaults match
+  // the spec: 10 requests / 15 minutes / IP.
+  authRateLimitMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 10,
+  authRateLimitWindowMs:
+    Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
 };

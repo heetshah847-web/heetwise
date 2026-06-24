@@ -30,4 +30,30 @@ export const api = {
     request('/auth/login', { method: 'POST', body: { email, password } }),
   logout: () => request('/auth/logout', { method: 'POST' }),
   me: () => request('/auth/me'),
+
+  // Groups
+  listGroups: () => request('/groups'),
+  createGroup: (name) => request('/groups', { method: 'POST', body: { name } }),
+  getGroup: (groupId) => request(`/groups/${groupId}`),
+  addMember: (groupId, email) =>
+    request(`/groups/${groupId}/members`, { method: 'POST', body: { email } }),
+  getBalances: (groupId) => request(`/groups/${groupId}/balances`),
+
+  // Expenses
+  listExpenses: (groupId, { cursor, limit } = {}) => {
+    const qs = new URLSearchParams();
+    if (limit) qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return request(`/groups/${groupId}/expenses${suffix}`);
+  },
+  createExpense: (groupId, expense) =>
+    request(`/groups/${groupId}/expenses`, { method: 'POST', body: expense }),
+  deleteExpense: (groupId, expenseId) =>
+    request(`/groups/${groupId}/expenses/${expenseId}`, { method: 'DELETE' }),
 };
+
+// Money helpers: the API speaks integer cents; the UI speaks dollars.
+export const toCents = (dollars) => Math.round(Number(dollars) * 100);
+export const formatCents = (cents) =>
+  `$${(cents / 100).toFixed(2)}`;

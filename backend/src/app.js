@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { env } from './config/env.js';
 import authRoutes from './routes/authRoutes.js';
+import groupRoutes from './routes/groupRoutes.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
@@ -33,6 +34,9 @@ export function createApp() {
 
   // Top-level /me test endpoint that returns the current user from token.
   app.get('/me', requireAuth, me);
+
+  // Smart-split domain: groups, members, expenses, balances.
+  app.use('/groups', groupRoutes);
 
   // 404 + centralized error handling.
   app.use(notFound);

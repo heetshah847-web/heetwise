@@ -1,5 +1,6 @@
-// Prisma schema for Heetwise
+// Prisma schema for Heetwise (smart expense splitting)
 // All IDs are UUIDs, never integers.
+// All money is stored as integer cents — never floats.
 
 generator client {
   provider = "prisma-client-js"
@@ -18,5 +19,83 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  // Smart-split relations
+  groupsCreated   Group[]       @relation("GroupCreator")
+  memberships     GroupMember[]
+  expensesPaid    Expense[]     @relation("ExpensePayer")
+  expensesCreated Expense[]     @relation("ExpenseCreator")
+  splits          Split[]
+
   @@map("users")
+}
+
+// A group is a set of people who share expenses (e.g. a trip, a household).
+model Group {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  createdById String   @map("created_by_id") @db.Uuid
+  createdBy   User     @relation("GroupCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members  GroupMember[]
+  expenses Expense[]
+
+  @@index([createdById])
+  @@map("groups")
+}
+
+// Join table: which users belong to which group. Access control is by membership.
+model GroupMember {
+  id       String   @id @default(uuid()) @db.Uuid
+  groupId  String   @map("group_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+enum SplitType {
+  EQUAL
+  EXACT
+}
+
+// A single expense within a group, paid by one member, split among members.
+model Expense {
+  id          String    @id @default(uuid()) @db.Uuid
+  groupId     String    @map("group_id") @db.Uuid
+  description String
+  amountCents Int       @map("amount_cents")
+  splitType   SplitType @default(EQUAL) @map("split_type")
+  paidById    String    @map("paid_by_id") @db.Uuid
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  group     Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy    User   @relation("ExpensePayer", fields: [paidById], references: [id])
+  createdBy User   @relation("ExpenseCreator", fields: [createdById], references: [id])
+  splits    Split[]
+
+  @@index([groupId])
+  @@index([paidById])
+  @@map("expenses")
+}
+
+// How much each participant owes for a given expense (in cents).
+model Split {
+  id          String  @id @default(uuid()) @db.Uuid
+  expenseId   String  @map("expense_id") @db.Uuid
+  userId      String  @map("user_id") @db.Uuid
+  amountCents Int     @map("amount_cents")
+  expense     Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user        User    @relation(fields: [userId], references: [id])
+
+  @@unique([expenseId, userId])
+  @@index([userId])
+  @@map("splits")
 }

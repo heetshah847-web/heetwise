@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:watch": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
@@ -23,6 +26,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
-    "prisma": "^5.18.0"
+    "prisma": "^5.18.0",
+    "supertest": "^7.0.0",
+    "vitest": "^2.0.5"
   }
 }

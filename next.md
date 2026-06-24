@@ -1,52 +1,52 @@
-# Phase 2
+# Phase 4
 
-## Context from Phase 1 (read this first)
-Phase 1 scaffolded the whole project and shipped auth. You now have:
-- `backend/` — Express (ES modules) with `config/ lib/ middleware/ controllers/ routes/ utils/`.
-- `frontend/` — React + Vite + React Router with `AuthContext`, `ProtectedRoute`, and Login/Register/Dashboard pages.
-- Prisma + PostgreSQL with a `User` model (UUID id, email, passwordHash, name).
-- Working register/login/logout, JWT in an httpOnly cookie, `requireAuth` middleware, `/auth/me` + `/me`, and a 10-req/15-min rate limiter on `/auth`.
-- Standard `{ data, error, status }` envelope via `sendSuccess` / `sendError`.
+## What Heetwise is
+A **smart expense-splitting** app. Users register, create groups, add members,
+record expenses (who paid, split equally or by exact amounts), and see per-person
+balances plus the minimal set of payments to settle up. Through Phase 3 it is
+**single-currency** (amounts are integer cents, no currency field anywhere).
 
-See STATUS.md for the full file-by-file breakdown.
+## Context from Phases 1–3 (read this first)
+See STATUS.md for the file-by-file breakdown. In short:
+- **Backend**: Express (ESM). Models `User`, `Group`, `GroupMember`, `Expense`, `Split` (Prisma/Postgres, all UUIDs, money as integer cents). Endpoints under `/auth` and `/groups` — all behind `requireAuth`, membership-checked (404 leaks nothing), all in the `{ data, error, status }` envelope. Equal + exact splits, balances + `simplifyDebts` settlements.
+- **Expenses list is paginated** (cursor: `?limit=&cursor=`, returns `{ expenses, nextCursor, hasMore }`) — no unbounded queries.
+- **Tests**: Vitest + supertest — unit (split/balance math), integration (auth, group/expense isolation, pagination, rate limit). `npm test`.
+- **Frontend**: React + Router. Login/Register/Dashboard + `Groups` and `GroupDetail` (members, expenses with "Load more", balances, settlements).
 
-## Before writing Phase 2 code (developer setup, one time)
-These could not be done in the build environment and must happen before the app runs:
-1. `cd backend && npm install`, then `cd frontend && npm install`.
-2. Copy `backend/.env.example` → `backend/.env` and fill in `DATABASE_URL` + a strong `JWT_SECRET`.
-3. Copy `frontend/.env.example` → `frontend/.env`.
-4. Start PostgreSQL, then `cd backend && npx prisma migrate dev --name init` to create the `users` table.
-5. Smoke test: run backend (`npm run dev`) and frontend (`npm run dev`); register a user, confirm the cookie is set and the Dashboard loads.
+## Before writing Phase 4 code (one-time developer setup, still outstanding)
+The build environment had no dependencies or database, so these have NOT happened:
+1. `cd backend && npm install`; `cd frontend && npm install`.
+2. `.env` files from the `.example` templates (backend + frontend; `.env.test` for tests).
+3. `cd backend && npx prisma migrate dev --name add_split_domain` — **the Phase 2 models (groups/expenses/splits) have never been migrated.** Phase 3 added no schema changes (pagination is query-only), so this single migration still covers everything to date.
+4. Run `npm test` against a throwaway test DB (see `tests/README.md`). **The test suite has been written across phases 2–3 but never executed here — run it and fix any real-world failures before building Phase 4.**
+5. Smoke test: two users, a group, an equal-split expense, confirm balances + settlements + the "Load more" button.
 
-## Phase 2 goal: first core domain resource + ownership + tests
-Introduce the app's first real data model behind auth, fully owned per-user, with complete CRUD and a real test suite. (Pick the concrete resource name with the product owner; this plan uses a generic `Item` — rename to the actual domain entity.)
+## Phase 4 goal: multi-currency
+Single-currency expenses are now complete, so this is the deferred multi-currency
+work the product owner flagged.
 
 ### Tasks
-1. **Prisma model** — add an `Item` model: UUID `id`, `title`, optional `description`, `userId` (UUID FK → `User.id`, `onDelete: Cascade`), `createdAt`/`updatedAt`. Add the relation field on `User`. Run a new migration (`prisma migrate dev --name add_item`).
-2. **CRUD endpoints** under `/items`, all behind `requireAuth`, all scoped to `req.user.id`:
-   - `POST /items` — create (validate title).
-   - `GET /items` — list only the current user's items.
-   - `GET /items/:id` — fetch one; 404 if not found OR not owned (don't leak existence).
-   - `PATCH /items/:id` — update; ownership-checked.
-   - `DELETE /items/:id` — delete; ownership-checked.
-   - New `controllers/itemController.js` + `routes/itemRoutes.js`, mounted in `app.js`. Keep the `{ data, error, status }` envelope and async/await throughout.
-3. **Validation** — add a small reusable validation helper in `utils/` (or adopt `zod`) rather than ad-hoc checks; return 400 with a clear message in the envelope.
-4. **Frontend** — an `Items` page (protected): list, create (form), edit, delete, wired through `api/client.js` (extend it with item methods, still `credentials: 'include'`). Add a nav link from the Dashboard.
-5. **Testing (new in phase 2)** — set up a test runner in `backend/` (Vitest or Jest + supertest). Cover: register/login happy path, rejecting bad credentials, the rate limiter, `requireAuth` rejecting missing/invalid cookies, and item ownership isolation (user A cannot read/modify user B's items). Add a `test` script to `backend/package.json`. Document how to point tests at a separate test database.
+1. **Currency on expenses** — add a `currency` field (ISO 4217 code, e.g. `USD`) to `Expense`; keep amounts as integer **minor units** (cents/pence/etc., which vary per currency — store the exponent or rely on a lookup). Default existing rows to a base currency via the migration. Validate the code against an allow-list.
+2. **Group base currency** — add a `baseCurrency` to `Group`; all balances are reported in the group's base currency.
+3. **FX conversion** — record an exchange rate on each expense (or look it up at creation time) so a foreign-currency expense can be converted to the base currency for balance math. Keep `computeBalances`/`simplifyDebts` operating on a single normalized currency (base) — do NOT mix raw amounts of different currencies in the math.
+4. **API + validation** — accept `currency` (and optional `rate`) on create/update expense; reject unknown currencies (400). Return both the original amount/currency and the base-currency-normalized amount in expense + balance responses.
+5. **Frontend** — currency selector on the add/edit expense form; show original currency on each expense row and the base currency on the balance screen.
+6. **Tests** — unit tests for conversion + mixed-currency balance normalization; integration test: expenses in two currencies net out correctly in the base currency.
+
+### Still open from earlier planning (decide whether to fold in first)
+These single-currency enhancements were scoped but not built — they may be worth
+finishing before/with multi-currency:
+- **Settle-up payments**: a `Payment`/`Settlement` model + endpoints, folded into `computeBalances` so recorded payments reduce balances.
+- **Expense editing UI**: the `PATCH` endpoint exists; the frontend has no edit form.
+- **EXACT split in the UI**: `GroupDetail` only submits EQUAL; add a split-type toggle + per-member amount inputs (validate they sum to the total).
+- **Leave/remove member**: `DELETE /groups/:id/members/:userId`; block removal when the member has a non-zero balance (409).
 
 ### Constraints (unchanged — from CLAUDE.md)
-- All IDs are UUIDs, never integers.
-- JWT only in httpOnly cookies, never localStorage.
-- All env vars in `.env`, never hardcoded, never in the client bundle.
-- Every DB query parameterized (Prisma handles this — no raw string concatenation).
-- All endpoints return `{ data, error, status }`.
-- async/await throughout, no callbacks.
-
-### Watch out for
-- Ownership checks must be enforced server-side on every `/items/:id` route — never trust an id from the client without confirming `userId === req.user.id`.
-- Return 404 (not 403) for items owned by someone else, to avoid leaking which ids exist.
-- Add an index on `Item.userId` for list performance.
-- Keep the rate limiter scoped to `/auth`; do not apply it to `/items`.
+- All IDs UUIDs; money stays integer minor units (never floats).
+- JWT only in httpOnly cookies; env-only config; parameterized Prisma queries.
+- All endpoints return `{ data, error, status }`; async/await throughout.
+- Membership checks on every `/groups/:id/...` route (404 for non-members).
+- Keep `computeBalances`/`simplifyDebts` pure + unit-tested; normalize currency before the math, never inside it.
 
 ## After completion
-Update STATUS.md with what was built, and update NEXT.md for phase 3.
+Update STATUS.md with what was built, and update NEXT.md for phase 5.

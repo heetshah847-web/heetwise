@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Dashboard() {
@@ -18,6 +18,9 @@ export default function Dashboard() {
         {user?.name ? ` (${user.name})` : ''}.
       </p>
       <p style={{ color: '#666' }}>User ID: {user?.id}</p>
+      <p>
+        <Link to="/groups">Go to your groups →</Link>
+      </p>
       <button onClick={handleLogout} style={{ padding: '8px 16px' }}>
         Log out
       </button>
