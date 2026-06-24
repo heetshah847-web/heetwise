@@ -6,6 +6,7 @@ import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
+import { getCurrencies, getRatesMeta } from './controllers/currencyController.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 import { sendSuccess } from './utils/response.js';
 
@@ -37,6 +38,10 @@ export function createApp() {
 
   // Smart-split domain: groups, members, expenses, balances.
   app.use('/groups', groupRoutes);
+
+  // Multi-currency: available currencies + latest rates (display only).
+  app.get('/currencies', requireAuth, getCurrencies);
+  app.get('/rates', requireAuth, getRatesMeta);
 
   // 404 + centralized error handling.
   app.use(notFound);

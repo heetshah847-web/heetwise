@@ -7,10 +7,15 @@ import {
   requireArray,
   requireEnum,
 } from '../utils/validation.js';
-import { ValidationError, NotFoundError } from '../utils/errors.js';
+import {
+  ValidationError,
+  NotFoundError,
+  ServiceUnavailableError,
+} from '../utils/errors.js';
 import { assertMembership, getGroupMemberIds } from '../services/membership.js';
 import { computeEqualSplits, buildExactSplits } from '../utils/split.js';
 import { calculateSplits } from '../services/splitService.js';
+import { getRate } from '../services/rateService.js';
 
 // EQUAL/EXACT are the legacy two; PERCENTAGE/WEIGHT were added in the smart
 // split phase. The full set is enforced by validateSplit + splitService.
@@ -28,6 +33,8 @@ function publicExpense(expense) {
     description: expense.description,
     amountCents: expense.amountCents,
     currency: expense.currency,
+    originalAmount: expense.originalAmount,
+    exchangeRate: expense.exchangeRate,
     splitType: expense.splitType,
     paidBy: publicUser(expense.paidBy),
     createdById: expense.createdById,
@@ -114,9 +121,12 @@ export async function createExpense(req, res, next) {
 
     const desc = requireString(description, 'description', { max: 200 });
     requireEnum(splitType, 'splitType', SPLIT_TYPES);
-    const cur = requireString(currency, 'currency', { min: 3, max: 3 });
-    const totalAmount = Number(amount);
-    if (!(totalAmount > 0)) {
+    const cur = requireString(currency ?? 'USD', 'currency', {
+      min: 3,
+      max: 3,
+    }).toUpperCase();
+    const originalAmount = Number(amount); // user-entered value, in `cur`
+    if (!(originalAmount > 0)) {
       throw new ValidationError('amount must be a positive number');
     }
     const paidById = requireUuid(paidBy, 'paidBy');
@@ -127,10 +137,33 @@ export async function createExpense(req, res, next) {
       throw new ValidationError('paidBy must be a member of the group');
     }
 
-    // Final per-member shares (dollars, guaranteed to sum to totalAmount).
-    const shares = calculateSplits(totalAmount, splitType, members);
+    // ── Currency conversion (BEFORE the transaction) ──
+    // USD passes through untouched; any other currency is converted to USD via
+    // the cached rate. If no rate is cached, surface a clear 503 (not a 500).
+    let exchangeRate = 1;
+    let usdAmount = originalAmount;
+    if (cur !== 'USD') {
+      try {
+        exchangeRate = await getRate(cur, 'USD');
+      } catch {
+        throw new ServiceUnavailableError(
+          'Exchange rates are not available yet. Please try again shortly ' +
+            '(an administrator may need to run the rate sync).'
+        );
+      }
+      usdAmount = originalAmount * exchangeRate;
+    }
+    const amountCents = Math.round(usdAmount * 100);
+
+    // Split the USD amount so balances stay in USD. For EXACT in a non-USD
+    // currency the per-member amounts were entered in `cur`, so convert them
+    // too before computing shares.
+    const membersForSplit =
+      splitType === 'EXACT' && cur !== 'USD'
+        ? members.map((m) => ({ ...m, amount: Number(m.amount) * exchangeRate }))
+        : members;
+    const shares = calculateSplits(usdAmount, splitType, membersForSplit);
     const metaByUser = new Map(members.map((m) => [m.userId, m]));
-    const amountCents = Math.round(totalAmount * 100);
 
     // Single transaction: expense + every split, all-or-nothing.
     const expense = await prisma.$transaction(async (tx) => {
@@ -139,7 +172,9 @@ export async function createExpense(req, res, next) {
           groupId,
           description: desc,
           amountCents,
-          currency: cur.toUpperCase(),
+          currency: cur,
+          originalAmount,
+          exchangeRate,
           splitType,
           paidById,
           createdById: req.user.id,

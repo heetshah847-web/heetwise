@@ -71,8 +71,14 @@ model Expense {
   id          String    @id @default(uuid()) @db.Uuid
   groupId     String    @map("group_id") @db.Uuid
   description String
+  // amountCents is the CONVERTED base-currency (USD) amount, in cents. The
+  // balance service reads only this, so it never changes for multi-currency.
   amountCents Int       @map("amount_cents")
   currency    String    @default("USD")
+  // What the user actually typed, in `currency`, before conversion.
+  originalAmount Decimal @default(0) @map("original_amount") @db.Decimal(14, 2)
+  // The CUR->USD rate used at creation time (1 for USD).
+  exchangeRate   Decimal @default(1) @map("exchange_rate") @db.Decimal(18, 8)
   splitType   SplitType @default(EQUAL) @map("split_type")
   paidById    String    @map("paid_by_id") @db.Uuid
   createdById String    @map("created_by_id") @db.Uuid
@@ -106,4 +112,21 @@ model Split {
   @@unique([expenseId, userId])
   @@index([userId])
   @@map("splits")
+}
+
+// Cached exchange rates (CUR -> USD). Populated by the rateService cron job;
+// never fetched inline during a request. `fetchedDate` (date-only) backs the
+// "one rate per pair per day" unique constraint, while `fetchedAt` keeps the
+// precise timestamp used to pick the most recent rate.
+model ExchangeRate {
+  id           String   @id @default(uuid()) @db.Uuid
+  fromCurrency String   @map("from_currency")
+  toCurrency   String   @map("to_currency")
+  rate         Decimal  @db.Decimal(18, 8)
+  fetchedAt    DateTime @default(now()) @map("fetched_at")
+  fetchedDate  DateTime @map("fetched_date") @db.Date
+
+  @@unique([fromCurrency, toCurrency, fetchedDate])
+  @@index([fromCurrency, toCurrency, fetchedAt])
+  @@map("exchange_rates")
 }

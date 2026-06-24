@@ -33,6 +33,10 @@ export default function GroupDetail() {
   const [amount, setAmount] = useState('');
   const [paidById, setPaidById] = useState('');
   const [splitType, setSplitType] = useState('EQUAL');
+  const [currency, setCurrency] = useState('USD');
+  const [currencies, setCurrencies] = useState(['USD']);
+  const [rates, setRates] = useState({}); // CUR -> USD, display only
+  const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   // Per-member inputs, keyed by userId (string values from the inputs).
   const [exactAmounts, setExactAmounts] = useState({});
   const [percentages, setPercentages] = useState({});
@@ -41,10 +45,12 @@ export default function GroupDetail() {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [g, e, b] = await Promise.all([
+      const [g, e, b, c, r] = await Promise.all([
         api.getGroup(groupId),
         api.listExpenses(groupId),
         api.getBalances(groupId),
+        api.listCurrencies(),
+        api.getRates(),
       ]);
       setGroup(g.group);
       setExpenses(e.expenses);
@@ -52,6 +58,9 @@ export default function GroupDetail() {
       setHasMore(e.hasMore);
       setBalances(b.balances);
       setSettlements(b.settlements);
+      setCurrencies(c.currencies.length ? c.currencies : ['USD']);
+      setRates(r.rates || {});
+      setRatesUpdatedAt(r.updatedAt || null);
       if (!paidById && g.group.members[0]) setPaidById(g.group.members[0].id);
     } catch (err) {
       setError(err.message);
@@ -154,7 +163,7 @@ export default function GroupDetail() {
       await api.createExpense(groupId, {
         description,
         amount: total,
-        currency: 'USD',
+        currency,
         paidBy: paidById,
         splitType,
         members: buildMembersPayload(),
@@ -216,6 +225,14 @@ export default function GroupDetail() {
 
       <section>
         <h2>Balances</h2>
+        <p style={{ color: '#666', fontSize: 13 }}>
+          All balances are calculated in USD.
+          {ratesUpdatedAt
+            ? ` Exchange rates last updated ${new Date(
+                ratesUpdatedAt
+              ).toLocaleString()}.`
+            : ' Exchange rates have not been loaded yet.'}
+        </p>
         <ul>
           {balances.map((b) => (
             <li key={b.user.id}>
@@ -256,11 +273,22 @@ export default function GroupDetail() {
               type="number"
               step="0.01"
               min="0.01"
-              placeholder="Amount ($)"
+              placeholder="Amount"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              style={{ padding: 8, width: 120, marginRight: 8 }}
+              style={{ padding: 8, width: 110, marginRight: 8 }}
             />
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              style={{ padding: 8, marginRight: 8 }}
+            >
+              {currencies.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
             <label style={{ marginRight: 8 }}>
               Paid by{' '}
               <select
@@ -288,6 +316,13 @@ export default function GroupDetail() {
               </select>
             </label>
           </div>
+
+          {currency !== 'USD' && (
+            <p style={{ margin: '0 0 8px', color: '#666', fontSize: 13 }}>
+              ≈ ${(total * (rates[currency] || 0)).toFixed(2)} USD (approx, at the
+              last fetched rate — the server applies the live rate on save)
+            </p>
+          )}
 
           {/* Per-member inputs depend on the selected split type. */}
           <div style={{ margin: '8px 0' }}>
@@ -402,15 +437,26 @@ export default function GroupDetail() {
         ) : (
           <ul>
             {expenses.map((ex) => (
-              <li key={ex.id} style={{ marginBottom: 6 }}>
-                {ex.description} — {formatCents(ex.amountCents)} ({ex.splitType})
-                paid by {ex.paidBy?.name || ex.paidBy?.email}{' '}
-                <button
-                  onClick={() => handleDeleteExpense(ex.id)}
-                  style={{ marginLeft: 8 }}
-                >
-                  Delete
-                </button>
+              <li key={ex.id} style={{ marginBottom: 8 }}>
+                <div>
+                  {ex.description} —{' '}
+                  <strong>
+                    {Number(ex.originalAmount).toFixed(2)} {ex.currency}
+                  </strong>{' '}
+                  ({ex.splitType}) paid by{' '}
+                  {ex.paidBy?.name || ex.paidBy?.email}{' '}
+                  <button
+                    onClick={() => handleDeleteExpense(ex.id)}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Delete
+                  </button>
+                </div>
+                {ex.currency !== 'USD' && (
+                  <div style={{ fontSize: 12, color: '#888' }}>
+                    = {formatCents(ex.amountCents)} USD
+                  </div>
+                )}
               </li>
             ))}
           </ul>

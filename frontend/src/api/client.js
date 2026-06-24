@@ -31,6 +31,10 @@ export const api = {
   logout: () => request('/auth/logout', { method: 'POST' }),
   me: () => request('/auth/me'),
 
+  // Currencies / rates (display only)
+  listCurrencies: () => request('/currencies'),
+  getRates: () => request('/rates'),
+
   // Groups
   listGroups: () => request('/groups'),
   createGroup: (name) => request('/groups', { method: 'POST', body: { name } }),

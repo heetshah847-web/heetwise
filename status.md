@@ -1,92 +1,127 @@
-Phase: 3 (complete)
+Phase: 4 (multi-currency) — complete (code), unverified at runtime
 
 Heetwise is a **smart expense-splitting** app (like Splitwise): users form groups,
-record who paid for shared expenses, and the app computes per-person balances and
-the minimal set of payments to settle up. **Single currency only** — there is no
-currency field anywhere yet (multi-currency is deliberately deferred).
+record who paid for shared expenses (in any supported currency), and the app
+computes per-person balances **in USD** plus the minimal set of payments to settle up.
 
-## Phase 3 (single-currency expenses, finalized)
-The Phase 3 scope was: expenses table (UUID/amount/description/paid_by/group_id/
-created_at), equal-split add-expense endpoint, expense_splits table, balance
-endpoint, frontend add-expense + balance screen, and pagination. **All of the
-expense/split/balance/UI pieces already shipped in Phase 2** (see below) and are
-single-currency (amounts stored as integer cents, never floats). The only piece
-not yet present was pagination, which Phase 3 added:
-- `GET /groups/:id/expenses` now uses **cursor pagination**: `?limit=` (default 20,
-  clamped 1–100) and `?cursor=` (last expense id). Fetches `limit + 1` rows to
-  compute `hasMore`; orders by `createdAt desc, id desc` for a stable cursor;
-  validates the cursor is a UUID (400 otherwise). No unbounded `findMany` remains.
-  Response `data`: `{ expenses, nextCursor, hasMore }`.
-- Frontend `api/client.js` `listExpenses(groupId, { cursor, limit })`; `GroupDetail`
-  tracks `nextCursor`/`hasMore` and shows a **Load more** button that appends.
-- Tests added: pagination (limit + cursor, no page overlap) and invalid-cursor 400.
+Money model: the base/settlement amount is stored as **integer cents (`amountCents`)**
+— the balance service reads only this. Multi-currency adds the original amount +
+rate alongside it; it does NOT change how balances are computed.
 
-> Note: Phase 2's NEXT.md described a generic `Item` placeholder and explicitly
-> said to "rename to the actual domain entity." The product owner confirmed the
-> real domain is smart split, so Phase 2 was built as Groups / Expenses / Splits /
-> Balances instead of a throwaway `Item` resource. Same structure the plan
-> mandated (membership-based ownership, full CRUD, validation, tests, frontend).
+---
 
-## Built in Phase 1 (still present)
-Auth scaffolding: Express app, Prisma+Postgres, `User` model, register/login/logout,
-JWT in httpOnly cookie, `requireAuth`, `/auth/me` + `/me`, 10-req/15-min rate limit
-on `/auth`, React shell with AuthContext/ProtectedRoute and Login/Register/Dashboard.
-See git history / this file's prior version for the full breakdown.
+## Phase 4 — Multi-currency (NEW)
 
-## New in Phase 2
+### Schema (Prisma)
+- `Expense` gained: `currency` (String, default `USD` — added in the smart-split
+  phase), `originalAmount` (`Decimal(14,2)` — what the user typed, in `currency`),
+  `exchangeRate` (`Decimal(18,8)` — the CUR→USD rate used at creation, 1 for USD).
+  `amountCents` continues to hold the **converted USD** amount, so `balance.js` is
+  untouched (it carries a "do not modify" comment).
+- New `ExchangeRate` table (`exchange_rates`): `id` (UUID), `fromCurrency`,
+  `toCurrency`, `rate` (`Decimal(18,8)`), `fetchedAt` (DateTime), `fetchedDate`
+  (`@db.Date`). Unique on `(fromCurrency, toCurrency, fetchedDate)` → one rate per
+  pair per day (Prisma can't index `date(fetched_at)` directly, hence the explicit
+  `fetchedDate` column). Indexed on `(fromCurrency, toCurrency, fetchedAt)`.
+- Migration name to run: **`add_multicurrency`** (not run here — see caveats).
 
-### Data model (Prisma) — all UUIDs, money as integer cents (never floats)
-- `Group` — id, name, `createdById` (FK User), timestamps. Indexed on createdById.
-- `GroupMember` — join table (groupId, userId), unique per pair, `onDelete: Cascade`. Access control is by membership.
-- `Expense` — id, groupId (cascade), description, `amountCents` (Int), `splitType` enum (EQUAL|EXACT), `paidById`, `createdById`, timestamps. Indexed on groupId + paidById.
-- `Split` — id, expenseId (cascade), userId, `amountCents`. Unique per (expense, user).
-- Relations added to `User` (groupsCreated, memberships, expensesPaid, expensesCreated, splits).
+### rateService isolation pattern (`src/services/rateService.js`)
+- The **only** file allowed to read `EXCHANGE_RATE_API_KEY` or call the external
+  rate API. Throws at import if the key is missing (hard startup error).
+- `fetchAndStoreRates()` — the only function that hits the network. Fetches
+  USD-based rates, stores each supported currency as a **CUR→USD** row (inverse of
+  the API's USD→CUR), upserts on the daily-unique key, returns the count stored.
+- `getRate(from, to)` — DB-only lookup of the most recent rate; **never** calls the
+  API. Throws a descriptive "run npm run sync-rates first" error if nothing cached.
+- Supported currencies: USD, EUR, GBP, JPY, CAD, AUD, INR, CNY, CHF, MXN, BRL, SGD.
 
-### Domain logic (pure, unit-tested — `src/utils/`)
-- `split.js` — `computeEqualSplits` (distributes remainder cents so splits always sum to the total) and `buildExactSplits` (validates exact amounts sum to total).
-- `balance.js` — `computeBalances` (net cents per user; always sums to zero) and `simplifyDebts` (greedy minimal-transaction settlement — the "smart" part).
+### Cron / job
+- `src/jobs/syncRates.js` — standalone script: calls `fetchAndStoreRates`, logs
+  count + timestamp, exits 0; on error logs the message only (no key) and exits 1.
+  `npm run sync-rates` runs it.
+- `src/index.js` (startup file) — on `listen`, calls `fetchAndStoreRates` once
+  immediately, then schedules it **hourly** via `node-cron` (`0 * * * *`). Both are
+  wrapped so an unreachable API logs a failure but never crashes the server.
 
-### Validation + errors
-- `src/utils/errors.js` — typed `AppError` subclasses (Validation 400, Unauthorized 401, Forbidden 403, NotFound 404, Conflict 409).
-- `src/utils/validation.js` — reusable `requireString/optionalString/requireInt/requireEmail/requireUuid/requireArray/requireEnum`, each throwing `ValidationError`.
-- `errorHandler` now maps `AppError` and Prisma `P2002`/`P2025` to the right status, all in the `{ data, error, status }` envelope.
+### Endpoints
+- `POST /groups/:id/expenses` now accepts `currency`. USD (or missing) → stored as
+  `originalAmount = amount`, `exchangeRate = 1`, `amountCents = amount*100`.
+  Non-USD → `getRate(cur,'USD')` (BEFORE the transaction); converts to USD for
+  `amountCents`, stores `originalAmount` + `exchangeRate`. If no rate is cached it
+  returns a clear **503** (not a 500). Splits are computed on the USD amount (EXACT
+  per-member amounts are converted too) so balances stay in USD.
+- `GET /currencies` (auth) — distinct `fromCurrency` values with cached rates, sorted.
+- `GET /rates` (auth) — `{ rates: {CUR: CUR→USD}, updatedAt }` for the UI's live
+  USD hint and the balance "rates last updated" line (display only). *(Added beyond
+  the literal spec because `/currencies` returns only an array and can't carry rates.)*
 
-### Services
-- `src/services/membership.js` — `assertMembership` (throws 404 for non-members so existence isn't leaked) and `getGroupMemberIds`.
-
-### Endpoints (all behind `requireAuth`, all in the standard envelope)
-- `POST /groups` (creator auto-added as member), `GET /groups` (only the user's groups), `GET /groups/:id`, `PATCH /groups/:id`, `DELETE /groups/:id` (creator only → 403 if member-but-not-creator).
-- `POST /groups/:id/members` (add by email; 404 if no such user, 409 if already a member).
-- `GET /groups/:id/balances` (net balances + simplified settlements, with user info; zero-activity members included).
-- `POST/GET/GET:expenseId/PATCH/DELETE` under `/groups/:id/expenses` — EQUAL split takes `participantIds`, EXACT takes `splits[]`; payer + all participants validated as group members; PATCH replaces splits atomically in a transaction. 404 if the expense isn't in the group.
-
-### Rate limiting
-- `rateLimit.js` refactored to a `createAuthRateLimiter({ max, windowMs })` factory; defaults from new env vars `AUTH_RATE_LIMIT_MAX` (10) / `AUTH_RATE_LIMIT_WINDOW_MS` (900000). Still applied only to `/auth`, never to `/groups`.
-
-### Tests (`backend/tests/`, Vitest + supertest)
-- `tests/unit/` — split + balance math (no DB). Runnable with `npm run test:unit`.
-- `tests/integration/auth.test.js` — register/cookie/UUID, bad password 401, duplicate 409, `/auth/me` rejects missing + invalid cookie, returns user with valid cookie.
-- `tests/integration/groups.test.js` — creator-as-member, equal-split balances + settlement correctness, non-members get 404 on read AND mutate (isolation), `GET /groups` scoping, exact-split mismatch → 400.
-- `tests/integration/rateLimit.test.js` — dedicated 2-request limiter returns 429 on the 3rd (no DB).
-- `vitest.config.js` (serial files, node env, loads `tests/setup.js`), `tests/setup.js` (loads `.env.test`), `tests/helpers/` (db reset + authed agent), `tests/README.md`.
-- `package.json` scripts: `test`, `test:unit`, `test:watch`. Dev deps: vitest, supertest.
+### Security
+- `errorHandler` scrubs `EXCHANGE_RATE_API_KEY` → `REDACTED` in any logged or
+  returned message/stack. The key is referenced only in `rateService.js` and (as
+  the spec directs) the sanitizer.
 
 ### Frontend
-- `api/client.js` extended with group/expense methods + `toCents`/`formatCents` helpers (UI uses dollars, API uses cents). Still `credentials: 'include'`, never localStorage.
-- `pages/Groups.jsx` — list + create groups.
-- `pages/GroupDetail.jsx` — members + add-member, balances + suggested settlements, expenses list + add (equal split with payer select & participant checkboxes) + delete.
-- Routes for `/groups` and `/groups/:groupId` (protected) in `App.jsx`; Dashboard links to groups.
+- `api/client.js`: `listCurrencies()`, `getRates()`.
+- `GroupDetail`: currency dropdown next to the amount (populated from `/currencies`);
+  a live "≈ $X USD" hint for non-USD; expense rows show **original amount + currency**
+  with the USD equivalent in smaller muted text; balance section header states all
+  balances are in USD and shows the last rate-update timestamp.
+
+### Env
+- `EXCHANGE_RATE_API_KEY` added to `.env.example` (server-side-only secret;
+  required to start; run `npm run sync-rates` once first). Dummy value added to
+  `.env.test.example` (the app imports rateService, which requires the key).
+- `node-cron` added to dependencies; `sync-rates` script added.
+
+---
+
+## Smart split (the prior phase — now documented)
+The four split types: **EQUAL, EXACT, PERCENTAGE, WEIGHT**.
+- `SplitType` enum extended to all four; `Split` gained nullable `percentage`
+  (`Decimal(7,4)`) and `weight` (`Decimal(12,4)`).
+- `src/services/splitService.js` — `calculateSplits(totalAmount, splitType, members)`;
+  math done in integer cents internally so results always sum exactly to the total;
+  remainder rules per spec (first member for EQUAL; highest %/weight for PERCENTAGE/
+  WEIGHT). Returns `[{ userId, amount }]`.
+- `src/middleware/validateSplit.js` — 400s for empty members, non-member userIds,
+  EXACT≠total, percentages≠100, non-positive weight, invalid splitType. Runs before
+  `createExpense`.
+- `POST /groups/:id/expenses` body: `{ description, amount (number), currency, paidBy,
+  splitType, members: [{ userId, amount?|percentage?|weight? }] }`. Expense + splits
+  written in one transaction.
+- `balance.js` reads final amounts from splits, so it is unchanged by split types
+  (carries an explicit "do not modify" comment).
+- PATCH `/expenses/:id` still uses the legacy EQUAL/EXACT path (`participantIds`/
+  `splits[amountCents]`) — PERCENTAGE/WEIGHT on update is a follow-up (see NEXT.md).
+- Tests: `tests/unit/splitService.test.js` (all four types + sum invariants + errors);
+  `groups.test.js` updated to the new body shape + PERCENTAGE/WEIGHT cases.
+
+## Phases 1–3 (still present, condensed)
+- **Auth**: register/login/logout, JWT httpOnly cookie, `requireAuth`, `/auth/me`+`/me`,
+  10-req/15-min limiter on `/auth` (configurable factory).
+- **Groups domain**: `Group`, `GroupMember` (membership = access control, 404 leaks
+  nothing), full groups CRUD, add-member-by-email, balances + `simplifyDebts`.
+- **Pagination**: `GET /groups/:id/expenses?limit=&cursor=` → `{ expenses, nextCursor,
+  hasMore }`; no unbounded queries.
+- Standard `{ data, error, status }` envelope; typed errors; reusable validators.
 
 ## Verified
-- All 27 backend `.js` files pass `node --check` (syntax). 
-- Logic reviewed for the CLAUDE.md rules: UUIDs everywhere, cookie-only JWT, env-driven config, parameterized Prisma queries, consistent envelope, async/await throughout.
+- All backend `.js` files pass `node --check` (syntax).
+- Reviewed against CLAUDE.md rules: UUIDs, cookie-only JWT, env-driven config (the
+  API key never reaches the client bundle), parameterized Prisma, consistent envelope,
+  async/await.
 
-## Not yet done (needs the developer — no deps/DB in build env)
-- `npm install` in `backend/` and `frontend/` (adds vitest/supertest too).
-- Run a migration for the new models: `npx prisma migrate dev --name add_split_domain`.
-- Create `.env` (and `.env.test` from `.env.test.example` for a throwaway test DB).
-- Run the suite: `npm test`. Integration tests need the test DB migrated first (`prisma migrate deploy` / `db push`). **Tests are written but have not been executed in this environment.**
+## NOT verified / outstanding (no deps, DB, or network in the build env)
+- `npm install` (now also pulls `node-cron`); frontend install too.
+- **Migrations have never been run.** Run `npx prisma migrate dev` — it will create
+  the full schema including `add_split_domain` + `add_multicurrency` changes.
+- Create `.env` (now requires `EXCHANGE_RATE_API_KEY`) and `.env.test`.
+- `npm run sync-rates` once to populate `exchange_rates` before non-USD expenses work.
+- **Nothing has been executed at runtime** — the smart-split and multi-currency code
+  (and all tests) are written and syntax-clean but unrun. The external rate API, the
+  cron job, and the conversion path have not been exercised.
 
 ## Environment variables in use
-Backend: DATABASE_URL, JWT_SECRET, JWT_EXPIRES_IN, PORT, CLIENT_ORIGIN, NODE_ENV, AUTH_RATE_LIMIT_MAX, AUTH_RATE_LIMIT_WINDOW_MS
+Backend: DATABASE_URL, JWT_SECRET, JWT_EXPIRES_IN, PORT, CLIENT_ORIGIN, NODE_ENV,
+AUTH_RATE_LIMIT_MAX, AUTH_RATE_LIMIT_WINDOW_MS, **EXCHANGE_RATE_API_KEY**
 Frontend: VITE_API_URL
