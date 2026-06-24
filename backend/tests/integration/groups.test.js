@@ -34,12 +34,14 @@ describe('groups + expenses', () => {
     const groupId = await createGroup(a);
     await a.post(`/groups/${groupId}/members`).send({ email: 'b@example.com' });
 
-    // A pays 1000 cents, split equally between A and B.
+    // A pays $10.00, split equally between A and B.
     const exp = await a.post(`/groups/${groupId}/expenses`).send({
       description: 'Dinner',
-      amountCents: 1000,
+      amount: 10,
+      currency: 'USD',
+      paidBy: ua.id,
       splitType: 'EQUAL',
-      participantIds: [ua.id, ub.id],
+      members: [{ userId: ua.id }, { userId: ub.id }],
     });
     expect(exp.status).toBe(201);
 
@@ -80,8 +82,10 @@ describe('groups + expenses', () => {
 
     const expRes = await b.post(`/groups/${groupId}/expenses`).send({
       description: 'Sneaky',
-      amountCents: 500,
-      participantIds: [ua.id],
+      amount: 5,
+      paidBy: ua.id,
+      splitType: 'EQUAL',
+      members: [{ userId: ua.id }],
     });
     expect(expRes.status).toBe(404);
   });
@@ -102,11 +106,85 @@ describe('groups + expenses', () => {
     const groupId = await createGroup(a);
     const res = await a.post(`/groups/${groupId}/expenses`).send({
       description: 'Bad',
-      amountCents: 1000,
+      amount: 10,
+      paidBy: ua.id,
       splitType: 'EXACT',
-      splits: [{ userId: ua.id, amountCents: 900 }],
+      members: [{ userId: ua.id, amount: 9 }],
     });
     expect(res.status).toBe(400);
+  });
+
+  it('computes a PERCENTAGE split correctly', async () => {
+    const { agent: a, user: ua } = await registerAgent(app, 'p1@example.com');
+    const { user: ub } = await registerAgent(app, 'p2@example.com');
+    const groupId = await createGroup(a);
+    await a.post(`/groups/${groupId}/members`).send({ email: 'p2@example.com' });
+
+    const exp = await a.post(`/groups/${groupId}/expenses`).send({
+      description: 'Rent',
+      amount: 100,
+      paidBy: ua.id,
+      splitType: 'PERCENTAGE',
+      members: [
+        { userId: ua.id, percentage: 70 },
+        { userId: ub.id, percentage: 30 },
+      ],
+    });
+    expect(exp.status).toBe(201);
+    const byUser = Object.fromEntries(
+      exp.body.data.expense.splits.map((s) => [s.user.id, s.amountCents])
+    );
+    expect(byUser[ua.id]).toBe(7000);
+    expect(byUser[ub.id]).toBe(3000);
+  });
+
+  it('rejects percentages that do not sum to 100 (400)', async () => {
+    const { agent: a, user: ua } = await registerAgent(app, 'p3@example.com');
+    const groupId = await createGroup(a);
+    const res = await a.post(`/groups/${groupId}/expenses`).send({
+      description: 'Bad pct',
+      amount: 100,
+      paidBy: ua.id,
+      splitType: 'PERCENTAGE',
+      members: [{ userId: ua.id, percentage: 90 }],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('computes a WEIGHT split and rejects zero weights', async () => {
+    const { agent: a, user: ua } = await registerAgent(app, 'w1@example.com');
+    const { user: ub } = await registerAgent(app, 'w2@example.com');
+    const groupId = await createGroup(a);
+    await a.post(`/groups/${groupId}/members`).send({ email: 'w2@example.com' });
+
+    const exp = await a.post(`/groups/${groupId}/expenses`).send({
+      description: 'Groceries',
+      amount: 90,
+      paidBy: ua.id,
+      splitType: 'WEIGHT',
+      members: [
+        { userId: ua.id, weight: 2 },
+        { userId: ub.id, weight: 1 },
+      ],
+    });
+    expect(exp.status).toBe(201);
+    const total = exp.body.data.expense.splits.reduce(
+      (s, x) => s + x.amountCents,
+      0
+    );
+    expect(total).toBe(9000); // splits always sum to the total
+
+    const bad = await a.post(`/groups/${groupId}/expenses`).send({
+      description: 'Zero weight',
+      amount: 90,
+      paidBy: ua.id,
+      splitType: 'WEIGHT',
+      members: [
+        { userId: ua.id, weight: 0 },
+        { userId: ub.id, weight: 1 },
+      ],
+    });
+    expect(bad.status).toBe(400);
   });
 
   it('paginates the expense list with limit + cursor', async () => {
@@ -117,8 +195,10 @@ describe('groups + expenses', () => {
     for (let i = 0; i < 5; i += 1) {
       const r = await a.post(`/groups/${groupId}/expenses`).send({
         description: `Expense ${i}`,
-        amountCents: 100,
-        participantIds: [ua.id],
+        amount: 1,
+        paidBy: ua.id,
+        splitType: 'EQUAL',
+        members: [{ userId: ua.id }],
       });
       expect(r.status).toBe(201);
     }

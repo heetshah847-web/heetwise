@@ -16,6 +16,7 @@ import {
   updateExpense,
   deleteExpense,
 } from '../controllers/expenseController.js';
+import { validateSplit } from '../middleware/validateSplit.js';
 
 const router = Router();
 
@@ -36,7 +37,8 @@ router.post('/:groupId/members', addMember);
 router.get('/:groupId/balances', getBalances);
 
 // Expenses (nested under a group)
-router.post('/:groupId/expenses', createExpense);
+// validateSplit runs first so createExpense only ever sees a valid split.
+router.post('/:groupId/expenses', validateSplit, createExpense);
 router.get('/:groupId/expenses', listExpenses);
 router.get('/:groupId/expenses/:expenseId', getExpense);
 router.patch('/:groupId/expenses/:expenseId', updateExpense);

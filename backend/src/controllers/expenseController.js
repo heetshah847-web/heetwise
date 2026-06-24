@@ -10,8 +10,12 @@ import {
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { assertMembership, getGroupMemberIds } from '../services/membership.js';
 import { computeEqualSplits, buildExactSplits } from '../utils/split.js';
+import { calculateSplits } from '../services/splitService.js';
 
-const SPLIT_TYPES = ['EQUAL', 'EXACT'];
+// EQUAL/EXACT are the legacy two; PERCENTAGE/WEIGHT were added in the smart
+// split phase. The full set is enforced by validateSplit + splitService.
+const SPLIT_TYPES = ['EQUAL', 'EXACT', 'PERCENTAGE', 'WEIGHT'];
+const LEGACY_SPLIT_TYPES = ['EQUAL', 'EXACT'];
 
 function publicUser(user) {
   return user ? { id: user.id, email: user.email, name: user.name } : null;
@@ -23,6 +27,7 @@ function publicExpense(expense) {
     groupId: expense.groupId,
     description: expense.description,
     amountCents: expense.amountCents,
+    currency: expense.currency,
     splitType: expense.splitType,
     paidBy: publicUser(expense.paidBy),
     createdById: expense.createdById,
@@ -30,16 +35,25 @@ function publicExpense(expense) {
     splits: expense.splits?.map((s) => ({
       user: publicUser(s.user),
       amountCents: s.amountCents,
+      percentage: s.percentage,
+      weight: s.weight,
     })),
   };
 }
 
-// Validate inputs and resolve the per-participant split amounts.
+// Legacy input resolver used by PATCH (update) only. Handles EQUAL/EXACT with
+// the older `participantIds` / `splits[amountCents]` body shape. The smart
+// create path below uses splitService instead. (PATCH support for
+// PERCENTAGE/WEIGHT is a follow-up — see NEXT.md.)
 // Returns { splitType, paidById, splits: [{ userId, amountCents }] }.
 async function resolveExpenseInput(groupId, body, currentUserId) {
   const description = requireString(body?.description, 'description', { max: 200 });
   const amountCents = requireInt(body?.amountCents, 'amountCents', { min: 1 });
-  const splitType = requireEnum(body?.splitType ?? 'EQUAL', 'splitType', SPLIT_TYPES);
+  const splitType = requireEnum(
+    body?.splitType ?? 'EQUAL',
+    'splitType',
+    LEGACY_SPLIT_TYPES
+  );
   const paidById = body?.paidById
     ? requireUuid(body.paidById, 'paidById')
     : currentUserId;
@@ -79,24 +93,79 @@ async function resolveExpenseInput(groupId, body, currentUserId) {
 }
 
 // POST /groups/:groupId/expenses
+// Body: { description, amount (number, dollars), currency?, paidBy (uuid),
+//         splitType, members: [{ userId, amount?|percentage?|weight? }] }
+// validateSplit middleware has already verified the split is well-formed and
+// every member belongs to the group. Here we compute the final shares with
+// splitService and persist the expense + all splits in one transaction.
 export async function createExpense(req, res, next) {
   try {
     const { groupId } = req.params;
     await assertMembership(groupId, req.user.id);
-    const input = await resolveExpenseInput(groupId, req.body, req.user.id);
 
-    const expense = await prisma.expense.create({
-      data: {
-        groupId,
-        description: input.description,
-        amountCents: input.amountCents,
-        splitType: input.splitType,
-        paidById: input.paidById,
-        createdById: req.user.id,
-        splits: { create: input.splits },
-      },
-      include: { paidBy: true, splits: { include: { user: true } } },
+    const {
+      description,
+      amount,
+      currency = 'USD',
+      paidBy,
+      splitType,
+      members,
+    } = req.body ?? {};
+
+    const desc = requireString(description, 'description', { max: 200 });
+    requireEnum(splitType, 'splitType', SPLIT_TYPES);
+    const cur = requireString(currency, 'currency', { min: 3, max: 3 });
+    const totalAmount = Number(amount);
+    if (!(totalAmount > 0)) {
+      throw new ValidationError('amount must be a positive number');
+    }
+    const paidById = requireUuid(paidBy, 'paidBy');
+
+    // The payer must also be a member (validateSplit only checks split members).
+    const memberIds = await getGroupMemberIds(groupId);
+    if (!memberIds.has(paidById)) {
+      throw new ValidationError('paidBy must be a member of the group');
+    }
+
+    // Final per-member shares (dollars, guaranteed to sum to totalAmount).
+    const shares = calculateSplits(totalAmount, splitType, members);
+    const metaByUser = new Map(members.map((m) => [m.userId, m]));
+    const amountCents = Math.round(totalAmount * 100);
+
+    // Single transaction: expense + every split, all-or-nothing.
+    const expense = await prisma.$transaction(async (tx) => {
+      const created = await tx.expense.create({
+        data: {
+          groupId,
+          description: desc,
+          amountCents,
+          currency: cur.toUpperCase(),
+          splitType,
+          paidById,
+          createdById: req.user.id,
+        },
+      });
+
+      await tx.split.createMany({
+        data: shares.map((s) => {
+          const meta = metaByUser.get(s.userId);
+          return {
+            expenseId: created.id,
+            userId: s.userId,
+            amountCents: Math.round(s.amount * 100),
+            percentage:
+              splitType === 'PERCENTAGE' ? Number(meta?.percentage) : null,
+            weight: splitType === 'WEIGHT' ? Number(meta?.weight) : null,
+          };
+        }),
+      });
+
+      return tx.expense.findUnique({
+        where: { id: created.id },
+        include: { paidBy: true, splits: { include: { user: true } } },
+      });
     });
+
     return sendSuccess(res, 201, { expense: publicExpense(expense) });
   } catch (err) {
     return next(err);

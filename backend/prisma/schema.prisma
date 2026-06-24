@@ -62,6 +62,8 @@ model GroupMember {
 enum SplitType {
   EQUAL
   EXACT
+  PERCENTAGE
+  WEIGHT
 }
 
 // A single expense within a group, paid by one member, split among members.
@@ -70,6 +72,7 @@ model Expense {
   groupId     String    @map("group_id") @db.Uuid
   description String
   amountCents Int       @map("amount_cents")
+  currency    String    @default("USD")
   splitType   SplitType @default(EQUAL) @map("split_type")
   paidById    String    @map("paid_by_id") @db.Uuid
   createdById String    @map("created_by_id") @db.Uuid
@@ -86,14 +89,19 @@ model Expense {
   @@map("expenses")
 }
 
-// How much each participant owes for a given expense (in cents).
+// How much each participant owes for a given expense.
+// `amountCents` is the final, authoritative share (always set, in cents).
+// `percentage` / `weight` record the raw input used to derive it for
+// PERCENTAGE / WEIGHT splits (nullable; null for EQUAL / EXACT).
 model Split {
-  id          String  @id @default(uuid()) @db.Uuid
-  expenseId   String  @map("expense_id") @db.Uuid
-  userId      String  @map("user_id") @db.Uuid
-  amountCents Int     @map("amount_cents")
-  expense     Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
-  user        User    @relation(fields: [userId], references: [id])
+  id          String   @id @default(uuid()) @db.Uuid
+  expenseId   String   @map("expense_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  amountCents Int      @map("amount_cents")
+  percentage  Decimal? @db.Decimal(7, 4)
+  weight      Decimal? @db.Decimal(12, 4)
+  expense     Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
 
   @@unique([expenseId, userId])
   @@index([userId])

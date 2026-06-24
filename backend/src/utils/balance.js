@@ -1,5 +1,12 @@
 // Pure balance + settlement math. No DB, fully unit-testable.
 // Input expenses shape: [{ paidById, amountCents, splits: [{ userId, amountCents }] }]
+//
+// IMPORTANT — DO NOT MODIFY WHEN ADDING SPLIT TYPES.
+// This service reads each member's FINAL share directly from expense_splits
+// (split.amountCents). How that share was derived — EQUAL, EXACT, PERCENTAGE,
+// WEIGHT, or any future split type — is irrelevant here, because splitService
+// has already resolved every split to a concrete amount before it was stored.
+// Adding a new split type therefore requires NO changes to this file.
 
 // Net balance per user in cents.
 //   positive = the group owes this user (they are owed money)
