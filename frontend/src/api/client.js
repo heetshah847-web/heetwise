@@ -34,6 +34,7 @@ export const api = {
   // Currencies / rates (display only)
   listCurrencies: () => request('/currencies'),
   getRates: () => request('/rates'),
+  syncRates: () => request('/rates/sync', { method: 'POST' }),
 
   // Statistics
   getGroupStats: (groupId) => request(`/stats/groups/${groupId}`),

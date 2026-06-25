@@ -1,90 +1,82 @@
-# Phase 6 — Final phase (settlement + hardening + ship-readiness)
+# NEXT — finish the UI overhaul (5b), then Phase 6 hardening
 
-## What Heetwise is
-A **smart expense-splitting** app: groups, multi-currency expenses (4 split types),
-USD balances + suggested settlements, and a full statistics module. Phase 6 closes
-the loop (recording settlements) and makes the project secure and shippable.
+## Where we are
+Phase 5b delivered the **UI foundation** (Tailwind v4, design system, page
+transitions, quick-add FAB + 3-step add-expense wizard, Currencies page) and one
+**additive** backend route (`POST /rates/sync`). See STATUS.md. The owner approved
+**minimal additive backend changes** to wire up UI features, and **foundation-first**
+delivery. Nothing here has been `npm install`-ed or run yet.
 
-## Context from Phases 1–5 (read STATUS.md for the full breakdown)
-- **Money model**: base/settlement amount = integer cents (`Expense.amountCents`,
-  `Split.amountCents`). `balance.js` reads ONLY split amounts — do not change it.
-- **Expense schema**: `{ id, groupId, description, amountCents (USD cents), currency,
-  originalAmount (Decimal), exchangeRate (Decimal CUR→USD), splitType, paidById,
-  createdById, timestamps }`. `Split { id, expenseId, userId, amountCents,
-  percentage?, weight? }`. `ExchangeRate { id, fromCurrency, toCurrency, rate,
-  fetchedAt, fetchedDate }`.
-- **Services to follow as patterns**: `splitService` (pure, cents-based, unit-tested),
-  `rateService` (only file touching the rate API key; `getRate` is DB-only),
-  `statsService` (only file running aggregations; DB does the math via
-  aggregate/groupBy/count + parameterized `$queryRaw`), `cacheService`
-  (NodeCache TTL 300s; `invalidateGroupStats(groupId)` clears `:group:<id>` keys).
-- **Endpoints**: auth; groups CRUD + members; expenses (paginated, multi-currency);
-  `/groups/:id/balances`; `/currencies`, `/rates`; `/stats/groups/:id`,
-  `/stats/groups/:id/members/:memberId`, `/stats/me`.
-- **Auth conventions**: `requireAuth` (JWT httpOnly cookie); `assertMembership`
-  (404, no leak) on group domain; `requireGroupMember` (403) on stats.
+## Before continuing (setup — still outstanding)
+1. `cd frontend && npm install` (Tailwind, framer-motion, radix, lucide, etc.);
+   `cd backend && npm install` (node-cron, node-cache).
+2. Backend `.env` (already has DATABASE_URL/JWT_SECRET/EXCHANGE_RATE_API_KEY set);
+   `frontend/.env` from example.
+3. `npx prisma migrate dev` (no migrations exist yet — creates the whole schema);
+   `npm run sync-rates` once.
+4. Run both dev servers; verify the FAB, wizard, currencies page, and that existing
+   pages still work. **The smart-split, multi-currency, stats, AND this UI code have
+   never been executed — verify and fix real issues before adding more.**
 
-## Before Phase 6 (still-outstanding setup — NOTHING has run in-build)
-1. `npm install` — backend (`node-cron`, `node-cache`) + frontend (`recharts`).
-2. `.env` (requires `EXCHANGE_RATE_API_KEY`) + `.env.test`.
-3. `npx prisma migrate dev` — creates the full schema (no migrations exist yet:
-   covers `add_split_domain` + `add_multicurrency`).
-4. `npm run sync-rates` once to populate `exchange_rates`.
-5. `npm test`, then smoke-test the whole flow incl. the three stats pages + charts.
-   **The smart-split, multi-currency, and statistics code has never been executed —
-   run it and fix real failures before building Phase 6.**
+## Phase 5b — remaining UI work (the "iterate" list)
+Each item notes the additive backend it needs (allowed). Build on the design system
+(`Button`, `Money`, `CurrencySelect`, `PageTransition`, `lib/currencies`).
 
-## Phase 6 tasks
+1. **Migrate existing pages to Tailwind/design system** (Login, Register, Dashboard,
+   Groups, GroupDetail, the 3 stats pages) — replace inline styles; add a **sidebar**
+   layout (Groups, Currencies w/ chart icon, profile avatar at bottom).
+2. **Splitwise-style expense list** (GroupDetail): category icon, date/desc/payer,
+   right-side original amount + you-owe/you-lent, click-to-expand split breakdown,
+   framer-motion **swipe-to-delete**. (Delete uses existing endpoint.)
+3. **Expense categories** — needs additive backend: add `category` (String/enum) to
+   `Expense` + accept it in `createExpense`/return it. Then category pills in the
+   wizard + emoji icon on rows.
+4. **Balance redesign** — horizontal owed/owe bars, Splitwise-style debt cards with
+   avatars + animated count-up amount + settle button. Display uses existing
+   `/balances`; the **settle action needs the settlement endpoint** (Phase 6 task 1).
+5. **Dashboard recent-expenses feed** — timeline of 10 latest across groups (can be
+   done client-side by merging `listGroups`+`listExpenses`, or add a small additive
+   `GET /me/recent` endpoint for efficiency).
+6. **Currency filter bar** on the expense list (All/USD/INR/EUR/…); client-side filter
+   + filtered original-currency total.
+7. **Group activity feed tab** — needs additive backend: an `ActivityLog` table +
+   write on expense add/delete, member join, settle; `GET /groups/:id/activity`.
+8. **Notification center** (slide-in panel, unread badge) — needs additive backend:
+   `Notification` table + `GET /notifications` + mark-read; emit on relevant events.
+9. **Profile/settings page** — needs additive backend: update profile/display name,
+   change password, preferred currency (add column), delete account (typed-DELETE
+   confirm). Add the endpoints + wire the UI.
+10. **Consistent currency formatting everywhere** via `<Money/>` — sweep all amount
+    displays (already started; finish during page migration).
 
-### 1. Debt settlement (closes the loop)
-- Add a `Settlement`/`Payment` model: `{ id, groupId, fromUserId, toUserId,
-  amountCents, createdAt }`. Endpoints to record / list / delete (membership-checked).
-- Fold settlements into balance math so recording a payment reduces balances.
-- **Minimum-transactions algorithm**: `simplifyDebts` already greedily reduces an
-  N×N balance set to a near-minimal transaction list — add explicit unit tests
-  (already-settled, single debtor/creditor, many-to-many) and confirm it stays
-  correct once recorded settlements affect balances.
-- **Wire cache invalidation**: the settlement create/delete endpoints MUST call
-  `invalidateGroupStats(groupId)` (the hook is already noted in `createExpense`).
-- Surface "mark settled" in the UI from the suggested-settlements list, and a
-  "settled" state so stats' "unsettled splits" becomes meaningful (today it's all).
+## Phase 6 — security hardening + ship-readiness (final)
+1. **Debt settlement**: `Settlement` model + record/list/delete endpoints; fold into
+   balance math (`simplifyDebts` minimum-transactions); call `invalidateGroupStats`
+   on settle (hook noted in `createExpense`). Unblocks the settle button + the
+   "unsettled" semantics in stats.
+2. **IDOR protection / authorization on every mutation** — audit all routes so each
+   verifies ownership/membership; no endpoint trusts a path id blindly.
+3. **helmet.js** security headers; **CSRF protection** (cookie auth → CSRF tokens /
+   double-submit / SameSite hardening).
+4. **Input sanitization + length limits** via **express-validator** across endpoints.
+5. **Replace all `console.log`/`console.error` with a winston logger** (`index.js`,
+   `errorHandler.js`, `syncRates.js`, `app.js`); keep API-key redaction.
+6. **Final `.env.example` audit** — every read var present + documented.
+7. **User-facing `README.md`** — clone-and-run from scratch (prereqs, install, `.env`,
+   `prisma migrate`, `npm run sync-rates`, start both servers, run tests, feature tour).
 
-### 2. Security hardening
-- **IDOR protection / authorization on every endpoint + mutation**: audit all
-  routes so each verifies the requester owns/belongs-to the resource (groups,
-  expenses, members, settlements, stats). Confirm no endpoint trusts a path id
-  without an ownership/membership check.
-- **helmet.js** for security headers; **CSRF protection** (the app uses cookie auth,
-  so add CSRF tokens / double-submit or SameSite hardening as appropriate).
-- **Input sanitization + length limits** consistently via the existing `validation`
-  helpers (cap string lengths, reject oversized payloads).
+### Carried-over follow-ups
+- **PATCH expense** still EQUAL/EXACT only (legacy shape) — move onto splitService +
+  validateSplit so updates support PERCENTAGE/WEIGHT + currency.
+- **bcrypt on Node 24** likely fails to build on Windows — switch to `bcryptjs`.
+- **getBalances** loads all group expenses to sum — consider a SQL aggregate.
 
-### 3. Cleanup / ship-readiness
-- Replace ALL `console.log`/`console.error` with a **winston** logger
-  (`index.js`, `errorHandler.js`, `syncRates.js`, `app.js`). Route it through the
-  existing API-key redaction so secrets never get logged.
-- **Final `.env.example` audit**: every variable the code reads must be present and
-  documented (DATABASE_URL, JWT_SECRET, JWT_EXPIRES_IN, PORT, CLIENT_ORIGIN,
-  NODE_ENV, AUTH_RATE_LIMIT_*, EXCHANGE_RATE_API_KEY; frontend VITE_API_URL).
-- **User-facing README.md**: clone-and-run from scratch — prerequisites (Node 20+,
-  Postgres), backend + frontend install, `.env` setup, `prisma migrate`,
-  `npm run sync-rates`, starting both servers, running tests, and a feature tour.
-
-### Known follow-ups to fold in (carried from earlier phases)
-- **PATCH expense** still only supports EQUAL/EXACT via the legacy
-  `participantIds`/`splits[amountCents]` shape — move it onto `splitService` +
-  `validateSplit` so updates support PERCENTAGE/WEIGHT + currency like create.
-- **`bcrypt` on Node 24** likely fails to build on Windows — switch to `bcryptjs`.
-- **`getBalances`** loads all group expenses to sum — consider a SQL aggregate (the
-  `statsService` pattern) if groups get large.
-
-### Constraints (unchanged — from CLAUDE.md)
+### Constraints (unchanged — CLAUDE.md)
 - UUIDs; base money in integer cents (never floats); JWT only in httpOnly cookies;
   secrets server-side only (rate API key only in `rateService` + the redactor);
-  parameterized Prisma / `$queryRaw`; `{ data, error, status }` envelope; async/await.
+  parameterized Prisma/$queryRaw; `{ data, error, status }` envelope; async/await.
 - Don't change `balance.js`'s contract; don't run aggregations outside `statsService`;
-  don't call the external rate API outside `rateService`/the cron job.
+  don't call the external rate API outside `rateService` / the cron / the new sync route.
 
 ## After completion
-This is the final planned phase. Update STATUS.md to mark the project
-feature-complete, and either close out NEXT.md or seed a maintenance/backlog list.
+Mark the project feature-complete in STATUS.md; close out or reseed NEXT.md.

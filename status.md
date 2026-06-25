@@ -1,4 +1,69 @@
-Phase: 5 (statistics) — complete (code), unverified at runtime
+Phase: 5b (UI/UX overhaul) — FOUNDATION done, redesign in progress; unverified at runtime
+
+---
+
+## Phase 5b — UI/UX overhaul (NEW; foundation delivered, more to iterate)
+
+Approach agreed with the owner: **foundation-first**, and **minimal additive backend
+changes are allowed** to wire up UI features that need data/actions the API didn't
+expose. Existing features/endpoints were NOT changed in behavior.
+
+### Tooling / dependencies (declared in package.json; not yet `npm install`-ed)
+- **Frontend**: tailwindcss + @tailwindcss/vite (Tailwind v4 via Vite plugin, wired in
+  `vite.config.js`; `src/index.css` has `@import "tailwindcss"` + theme tokens +
+  button keyframes; imported in `main.jsx`), framer-motion, lucide-react, clsx,
+  date-fns, react-hot-toast (`<Toaster/>` mounted), @radix-ui/react-{dialog,popover,
+  select,tooltip}, recharts (already present).
+
+### Design system (new, shared)
+- `lib/cn.js` (clsx wrapper); `lib/currencies.js` (currency metadata: flag/symbol/
+  name for the 12 supported + `formatNumber`/`formatMoney`); `components/Money.jsx`
+  (symbol-before-number, comma thousands, 2dp, muted code suffix; shows USD equivalent
+  beneath non-USD — never a bare USD conversion).
+- `components/Button.jsx` — primary (indigo + hover shimmer), destructive (red,
+  **two-step confirm** w/ 3s reset), `whileTap` scale 0.96 + click pulse, disabled =
+  muted + not-allowed + Radix tooltip reason, loading spinner.
+- `components/PageTransition.jsx` + `AnimatePresence` in `App.jsx` — every route change
+  fades/slides in from the right, old page out to the left.
+
+### Flagship features delivered
+- **Quick-add FAB** (`components/Fab.jsx`) — fixed bottom-right on every signed-in page,
+  plus icon rotates 45° on hover; opens a Radix dialog → pick group → wizard.
+- **Add-expense wizard** (`components/AddExpenseWizard.jsx`) — 3 steps (Amount &
+  Currency / Split Details / Review) with a progress bar, horizontal slide
+  transitions, Back button, giant amount input, **searchable currency selector**
+  (`components/CurrencySelect.jsx`, flag+code+name), live USD conversion card (rate +
+  "updated X ago"), 4 illustrated split-type cards, animated member inputs, review
+  card, and submit → spinner → green checkmark. Used by the FAB and reusable per-group.
+- **Currencies page** (`pages/Currencies.jsx`, route `/currencies`, linked from
+  Dashboard) — base-currency selector, searchable grid of rate cards w/ relative-
+  strength mini-bars, a converter widget with an animated swap button, last-updated
+  time + a working **Refresh** button.
+
+### Additive backend (authorized; does not change existing behavior)
+- `POST /rates/sync` (`currencyController.syncRatesNow`, `requireAuth`) — manual
+  refresh that calls the same `fetchAndStoreRates` the cron uses; returns
+  `{ stored, updatedAt }`; upstream failure → 503. `api.client.syncRates()` added.
+
+### Design decisions
+- Tailwind v4 (CSS-config, no tailwind.config.js); indigo (`brand-*`) accent.
+- Currency math on the client is display-only; the server remains authoritative.
+- New UI is additive — existing inline-styled pages still render and work; they'll be
+  migrated to the design system during the iterate phase.
+
+### NOT yet done (the iterate phase — see NEXT.md)
+Per-page redesigns (Splitwise-style expense list + expand + swipe-delete, balance
+graph with animated bars/debt cards, dashboard recent feed, group activity feed,
+notification center, profile/settings, expense categories, currency filter bar,
+sidebar) — several of these need the authorized additive backend (categories column,
+activity log, notifications, settlement endpoint, profile/password/delete).
+
+### Unverified
+- Backend additive files pass `node --check`. **Frontend is NOT installed/built** —
+  no `npm install` (Tailwind, framer-motion, radix, etc.), so the new UI is written
+  but unrendered/unverified.
+
+---
 
 Heetwise is a **smart expense-splitting** app (like Splitwise): users form groups,
 record who paid for shared expenses (in any supported currency), and the app

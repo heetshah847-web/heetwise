@@ -7,7 +7,11 @@ import groupRoutes from './routes/groupRoutes.js';
 import statsRoutes from './routes/stats.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
-import { getCurrencies, getRatesMeta } from './controllers/currencyController.js';
+import {
+  getCurrencies,
+  getRatesMeta,
+  syncRatesNow,
+} from './controllers/currencyController.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 import { sendSuccess } from './utils/response.js';
 
@@ -43,6 +47,7 @@ export function createApp() {
   // Multi-currency: available currencies + latest rates (display only).
   app.get('/currencies', requireAuth, getCurrencies);
   app.get('/rates', requireAuth, getRatesMeta);
+  app.post('/rates/sync', requireAuth, syncRatesNow);
 
   // Statistics / aggregation module (cached).
   app.use('/stats', statsRoutes);

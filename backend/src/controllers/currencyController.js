@@ -1,5 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { sendSuccess } from '../utils/response.js';
+import { ServiceUnavailableError } from '../utils/errors.js';
+import { fetchAndStoreRates } from '../services/rateService.js';
 
 // GET /currencies — distinct currencies that actually have cached rates, sorted.
 // The frontend uses this to populate the currency dropdown (no hardcoded list).
@@ -37,5 +39,24 @@ export async function getRatesMeta(req, res, next) {
     return sendSuccess(res, 200, { rates, updatedAt });
   } catch (err) {
     return next(err);
+  }
+}
+
+// POST /rates/sync — manual on-demand refresh of cached rates. Additive: it
+// just calls the same fetchAndStoreRates the cron job uses (the only place that
+// touches the external API). Returns how many were stored + the new timestamp.
+export async function syncRatesNow(req, res, next) {
+  try {
+    const stored = await fetchAndStoreRates();
+    const latest = await prisma.exchangeRate.findFirst({
+      orderBy: { fetchedAt: 'desc' },
+      select: { fetchedAt: true },
+    });
+    return sendSuccess(res, 200, { stored, updatedAt: latest?.fetchedAt ?? null });
+  } catch (err) {
+    // Upstream API failure → 503, not a generic 500.
+    return next(
+      new ServiceUnavailableError('Could not refresh exchange rates right now.')
+    );
   }
 }
