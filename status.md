@@ -1,4 +1,4 @@
-Phase: 4 (multi-currency) — complete (code), unverified at runtime
+Phase: 5 (statistics) — complete (code), unverified at runtime
 
 Heetwise is a **smart expense-splitting** app (like Splitwise): users form groups,
 record who paid for shared expenses (in any supported currency), and the app
@@ -7,6 +7,60 @@ computes per-person balances **in USD** plus the minimal set of payments to sett
 Money model: the base/settlement amount is stored as **integer cents (`amountCents`)**
 — the balance service reads only this. Multi-currency adds the original amount +
 rate alongside it; it does NOT change how balances are computed.
+
+---
+
+## Phase 5 — Statistics module (NEW)
+
+### Aggregation layer (DB does the math — no raw rows summed in JS)
+- `src/services/statsService.js` — the ONLY file that runs aggregation queries.
+  Uses Prisma `aggregate` / `groupBy` / `count`; for month-bucketed and
+  cross-table sums (which `groupBy` can't express) it uses parameterized
+  `$queryRaw` with `EXTRACT`/`date_trunc` (still DB-side, no string concatenation).
+  Exports `groupStats`, `memberStats`, `meStats`. All money returned in USD
+  dollars (rounded), from `amountCents`/`originalAmount`.
+- `src/routes/stats.js` — defines the three endpoints, registered in `app.js`
+  under **`/stats`**.
+
+### Endpoints (caching TTL = 300s / 5 min)
+- `GET /stats/groups/:groupId` — total_spent, expense_count, average_expense,
+  largest_expense, most_active_payer, monthly_breakdown (12 mo), payer_breakdown,
+  currency_breakdown. **403 for non-members** (via `requireGroupMember` middleware).
+- `GET /stats/groups/:groupId/members/:memberId` — total_paid, total_consumed,
+  net_balance, payment/consumption share %, monthly_net_trend (6 mo), top_categories.
+  Requester must be the member OR the group **admin (= creator)** → 403 otherwise.
+- `GET /stats/me` — total_paid_this_month, total_owed (net), most_active_group,
+  six_month_trend, group_breakdown. Auth only (personal, no group guard).
+
+### Caching (`src/services/cacheService.js`)
+- Wraps a single `NodeCache` (TTL 300s). Exports `get`, `set`, `del`, and
+  `invalidateGroupStats(groupId)` (deletes every key containing `:group:<id>`).
+- Each endpoint builds a key from path + user id, returns on hit, else computes →
+  caches → returns. `createExpense` calls `invalidateGroupStats` after writing.
+- **node-cache** added to backend dependencies.
+
+### New frontend pages (Recharts; all charts in `ResponsiveContainer width="100%"`,
+### tooltips on, app palette from `src/theme.js`, USD-formatted values)
+- `/groups/:groupId/stats` (`GroupStats.jsx`) — 4 responsive stat cards, 12-month
+  spending bar chart, payer pie chart + legend (name/total/%), currency cards.
+  Linked from a **Stats** button in the group header.
+- `/groups/:groupId/members/:memberId/stats` (`MemberStats.jsx`) — paid/consumed big
+  numbers, green/red net balance, 6-month net line chart with a zero `ReferenceLine`,
+  top-5 list. Linked from each member name in the group members list.
+- `/dashboard/stats` (`MyStats.jsx`) — hero "paid this month", color-coded net owed,
+  most-active-group card, dual-line paid-vs-consumed chart with legend, per-group
+  breakdown table. Linked from the Dashboard.
+- **recharts** added to frontend dependencies; `api/client.js` gained
+  `getGroupStats`/`getMemberStats`/`getMyStats`; `src/theme.js` holds COLORS + USD/
+  month formatters.
+
+### Reconciliations / known gaps (spec referenced things not yet built)
+- **No settlement endpoint exists** (future phase) — its cache-invalidation hook is
+  documented in `createExpense` and must be wired when settlement lands.
+- **No "settled" flag** — "unsettled" splits = all splits (total_owed/consumed sum all).
+- **"admin"** maps to the group **creator** (`createdById`).
+- Stats use **403** for non-members per the explicit spec, diverging from the
+  404-no-leak convention on other group routes.
 
 ---
 
@@ -112,7 +166,8 @@ The four split types: **EQUAL, EXACT, PERCENTAGE, WEIGHT**.
   async/await.
 
 ## NOT verified / outstanding (no deps, DB, or network in the build env)
-- `npm install` (now also pulls `node-cron`); frontend install too.
+- `npm install` (backend now also pulls `node-cron` + `node-cache`; frontend now
+  pulls `recharts`).
 - **Migrations have never been run.** Run `npx prisma migrate dev` — it will create
   the full schema including `add_split_domain` + `add_multicurrency` changes.
 - Create `.env` (now requires `EXCHANGE_RATE_API_KEY`) and `.env.test`.

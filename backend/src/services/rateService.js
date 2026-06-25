@@ -19,8 +19,7 @@ if (!API_KEY) {
 }
 
 // Open Exchange Rates (free tier) — base USD. Fixer.io works equivalently.
-const RATES_URL = 'https://openexchangerates.org/api/latest.json';
-
+const RATES_URL = `https://v6.exchangerate-api.com/v6/${API_KEY}/latest/USD`;
 // Currencies we cache and offer in the UI. USD is the base.
 const SUPPORTED_CURRENCIES = [
   'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD',
@@ -37,13 +36,13 @@ function utcDateOnly(date) {
 // Fetch current rates from the external API and upsert them. Returns the number
 // of rates stored. This is the ONLY function that hits the network.
 export async function fetchAndStoreRates() {
-  const res = await fetch(`${RATES_URL}?app_id=${API_KEY}&base=USD`);
+  const res = await fetch(RATES_URL);
   if (!res.ok) {
     // Note: never include the URL/key in the thrown message.
     throw new Error(`Exchange rate API request failed with status ${res.status}`);
   }
   const data = await res.json();
-  const usdRates = data?.rates ?? {};
+  const usdRates = data?.conversion_rates ?? {};
 
   const now = new Date();
   const fetchedDate = utcDateOnly(now);

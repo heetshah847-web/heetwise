@@ -35,6 +35,12 @@ export const api = {
   listCurrencies: () => request('/currencies'),
   getRates: () => request('/rates'),
 
+  // Statistics
+  getGroupStats: (groupId) => request(`/stats/groups/${groupId}`),
+  getMemberStats: (groupId, memberId) =>
+    request(`/stats/groups/${groupId}/members/${memberId}`),
+  getMyStats: () => request('/stats/me'),
+
   // Groups
   listGroups: () => request('/groups'),
   createGroup: (name) => request('/groups', { method: 'POST', body: { name } }),

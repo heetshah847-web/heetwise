@@ -198,14 +198,37 @@ export default function GroupDetail() {
       <p>
         <Link to="/groups">← All groups</Link>
       </p>
-      <h1>{group.name}</h1>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <h1>{group.name}</h1>
+        <Link
+          to={`/groups/${groupId}/stats`}
+          style={{
+            padding: '8px 16px',
+            border: '1px solid #4f46e5',
+            borderRadius: 6,
+            textDecoration: 'none',
+          }}
+        >
+          Stats
+        </Link>
+      </div>
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
 
       <section>
         <h2>Members</h2>
         <ul>
           {group.members.map((m) => (
-            <li key={m.id}>{memberLabel(m)}</li>
+            <li key={m.id}>
+              <Link to={`/groups/${groupId}/members/${m.id}/stats`}>
+                {memberLabel(m)}
+              </Link>
+            </li>
           ))}
         </ul>
         <form onSubmit={handleAddMember}>

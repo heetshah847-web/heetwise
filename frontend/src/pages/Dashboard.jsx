@@ -21,6 +21,9 @@ export default function Dashboard() {
       <p>
         <Link to="/groups">Go to your groups →</Link>
       </p>
+      <p>
+        <Link to="/dashboard/stats">Your statistics →</Link>
+      </p>
       <button onClick={handleLogout} style={{ padding: '8px 16px' }}>
         Log out
       </button>

@@ -4,6 +4,9 @@ import Register from './pages/Register.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Groups from './pages/Groups.jsx';
 import GroupDetail from './pages/GroupDetail.jsx';
+import GroupStats from './pages/GroupStats.jsx';
+import MemberStats from './pages/MemberStats.jsx';
+import MyStats from './pages/MyStats.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 export default function App() {
@@ -32,6 +35,30 @@ export default function App() {
         element={
           <ProtectedRoute>
             <GroupDetail />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/groups/:groupId/stats"
+        element={
+          <ProtectedRoute>
+            <GroupStats />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/groups/:groupId/members/:memberId/stats"
+        element={
+          <ProtectedRoute>
+            <MemberStats />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/stats"
+        element={
+          <ProtectedRoute>
+            <MyStats />
           </ProtectedRoute>
         }
       />

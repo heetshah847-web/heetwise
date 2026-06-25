@@ -4,6 +4,7 @@ import cors from 'cors';
 import { env } from './config/env.js';
 import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
+import statsRoutes from './routes/stats.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
 import { getCurrencies, getRatesMeta } from './controllers/currencyController.js';
@@ -42,6 +43,9 @@ export function createApp() {
   // Multi-currency: available currencies + latest rates (display only).
   app.get('/currencies', requireAuth, getCurrencies);
   app.get('/rates', requireAuth, getRatesMeta);
+
+  // Statistics / aggregation module (cached).
+  app.use('/stats', statsRoutes);
 
   // 404 + centralized error handling.
   app.use(notFound);
