@@ -20,6 +20,12 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   port: Number(process.env.PORT) || 4000,
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  // Allowed CORS origin. Prefer FRONTEND_URL (set to the deployed Vercel URL in
+  // production); fall back to CLIENT_ORIGIN, then localhost for dev.
+  frontendUrl:
+    process.env.FRONTEND_URL ||
+    process.env.CLIENT_ORIGIN ||
+    'http://localhost:5173',
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
   // Auth rate limit is configurable so tests can widen it; defaults match

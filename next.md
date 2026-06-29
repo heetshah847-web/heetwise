@@ -1,82 +1,69 @@
-# NEXT — finish the UI overhaul (5b), then Phase 6 hardening
+# NEXT — Phase 7: Deployment
 
-## Where we are
-Phase 5b delivered the **UI foundation** (Tailwind v4, design system, page
-transitions, quick-add FAB + 3-step add-expense wizard, Currencies page) and one
-**additive** backend route (`POST /rates/sync`). See STATUS.md. The owner approved
-**minimal additive backend changes** to wire up UI features, and **foundation-first**
-delivery. Nothing here has been `npm install`-ed or run yet.
+Security hardening (Phase 6) is done. The final phase is deploying the app:
+**backend + PostgreSQL on Railway**, **frontend on Vercel**, with environment
+variables set on both and CORS pointed at the live Vercel URL.
 
-## Before continuing (setup — still outstanding)
-1. `cd frontend && npm install` (Tailwind, framer-motion, radix, lucide, etc.);
-   `cd backend && npm install` (node-cron, node-cache).
-2. Backend `.env` (already has DATABASE_URL/JWT_SECRET/EXCHANGE_RATE_API_KEY set);
-   `frontend/.env` from example.
-3. `npx prisma migrate dev` (no migrations exist yet — creates the whole schema);
-   `npm run sync-rates` once.
-4. Run both dev servers; verify the FAB, wizard, currencies page, and that existing
-   pages still work. **The smart-split, multi-currency, stats, AND this UI code have
-   never been executed — verify and fix real issues before adding more.**
+## Pre-flight (do these first)
+1. `cd backend && npm install` and `cd frontend && npm install` (both verified to
+   build locally; backend boots, frontend `npm run build` succeeds).
+2. Locally: `npx prisma migrate dev` (no migrations exist yet — this creates the full
+   schema), then `npm run sync-rates` once, then `npm test` against a test DB to
+   confirm the integration suite is green (only unit tests have been run here).
+3. Confirm `.gitignore` excludes `.env`, `node_modules`, `dist`, `.env.test`.
 
-## Phase 5b — remaining UI work (the "iterate" list)
-Each item notes the additive backend it needs (allowed). Build on the design system
-(`Button`, `Money`, `CurrencySelect`, `PageTransition`, `lib/currencies`).
+## 1. Push to GitHub
+- `git init` (if needed), commit everything, create a GitHub repo, push.
+- Double-check **no secrets are committed**: `.env` is gitignored; only `.env.example`
+  (placeholders) is tracked. `EXCHANGE_RATE_API_KEY`, `JWT_SECRET`, the DB password
+  must never appear in tracked files.
 
-1. **Migrate existing pages to Tailwind/design system** (Login, Register, Dashboard,
-   Groups, GroupDetail, the 3 stats pages) — replace inline styles; add a **sidebar**
-   layout (Groups, Currencies w/ chart icon, profile avatar at bottom).
-2. **Splitwise-style expense list** (GroupDetail): category icon, date/desc/payer,
-   right-side original amount + you-owe/you-lent, click-to-expand split breakdown,
-   framer-motion **swipe-to-delete**. (Delete uses existing endpoint.)
-3. **Expense categories** — needs additive backend: add `category` (String/enum) to
-   `Expense` + accept it in `createExpense`/return it. Then category pills in the
-   wizard + emoji icon on rows.
-4. **Balance redesign** — horizontal owed/owe bars, Splitwise-style debt cards with
-   avatars + animated count-up amount + settle button. Display uses existing
-   `/balances`; the **settle action needs the settlement endpoint** (Phase 6 task 1).
-5. **Dashboard recent-expenses feed** — timeline of 10 latest across groups (can be
-   done client-side by merging `listGroups`+`listExpenses`, or add a small additive
-   `GET /me/recent` endpoint for efficiency).
-6. **Currency filter bar** on the expense list (All/USD/INR/EUR/…); client-side filter
-   + filtered original-currency total.
-7. **Group activity feed tab** — needs additive backend: an `ActivityLog` table +
-   write on expense add/delete, member join, settle; `GET /groups/:id/activity`.
-8. **Notification center** (slide-in panel, unread badge) — needs additive backend:
-   `Notification` table + `GET /notifications` + mark-read; emit on relevant events.
-9. **Profile/settings page** — needs additive backend: update profile/display name,
-   change password, preferred currency (add column), delete account (typed-DELETE
-   confirm). Add the endpoints + wire the UI.
-10. **Consistent currency formatting everywhere** via `<Money/>` — sweep all amount
-    displays (already started; finish during page migration).
+## 2. Backend + PostgreSQL on Railway
+- New Railway project → **Add PostgreSQL** plugin. Railway provides a `DATABASE_URL`.
+- **Add a service** from the GitHub repo, root = `backend/`.
+- Build/start: install deps, run `npx prisma migrate deploy` on release (not
+  `migrate dev`), start with `npm start`.
+- **Environment variables** (Railway → Variables):
+  - `DATABASE_URL` (reference the Postgres plugin's variable)
+  - `JWT_SECRET` (a long random string — generate a new one, do NOT reuse the dev value)
+  - `JWT_EXPIRES_IN=7d`
+  - `EXCHANGE_RATE_API_KEY` (the real server-side key)
+  - `NODE_ENV=production`
+  - `PORT` (Railway sets one; the app reads `process.env.PORT`)
+  - `FRONTEND_URL` = the Vercel URL (set after step 3; e.g. `https://heetwise.vercel.app`)
+  - `CLIENT_ORIGIN` = same as FRONTEND_URL (kept as a fallback)
+- After first deploy, run `npm run sync-rates` once (Railway one-off command / shell)
+  so `exchange_rates` is populated; the hourly cron then keeps it fresh.
+- Note: in production the JWT cookie is `secure` + `sameSite=none`, so the API must be
+  served over **HTTPS** (Railway provides it) and the frontend must call it over HTTPS.
 
-## Phase 6 — security hardening + ship-readiness (final)
-1. **Debt settlement**: `Settlement` model + record/list/delete endpoints; fold into
-   balance math (`simplifyDebts` minimum-transactions); call `invalidateGroupStats`
-   on settle (hook noted in `createExpense`). Unblocks the settle button + the
-   "unsettled" semantics in stats.
-2. **IDOR protection / authorization on every mutation** — audit all routes so each
-   verifies ownership/membership; no endpoint trusts a path id blindly.
-3. **helmet.js** security headers; **CSRF protection** (cookie auth → CSRF tokens /
-   double-submit / SameSite hardening).
-4. **Input sanitization + length limits** via **express-validator** across endpoints.
-5. **Replace all `console.log`/`console.error` with a winston logger** (`index.js`,
-   `errorHandler.js`, `syncRates.js`, `app.js`); keep API-key redaction.
-6. **Final `.env.example` audit** — every read var present + documented.
-7. **User-facing `README.md`** — clone-and-run from scratch (prereqs, install, `.env`,
-   `prisma migrate`, `npm run sync-rates`, start both servers, run tests, feature tour).
+## 3. Frontend on Vercel
+- Import the GitHub repo, root = `frontend/`. Framework preset: **Vite**.
+  Build: `npm run build`, output: `dist`.
+- **Environment variable**: `VITE_API_URL` = the Railway backend HTTPS URL
+  (e.g. `https://heetwise-api.up.railway.app`). (Only `VITE_`-prefixed vars reach the
+  client bundle; never put secrets here.)
+- Deploy → note the resulting Vercel URL.
 
-### Carried-over follow-ups
-- **PATCH expense** still EQUAL/EXACT only (legacy shape) — move onto splitService +
-  validateSplit so updates support PERCENTAGE/WEIGHT + currency.
-- **bcrypt on Node 24** likely fails to build on Windows — switch to `bcryptjs`.
-- **getBalances** loads all group expenses to sum — consider a SQL aggregate.
+## 4. Wire CORS to the live URL
+- Set Railway's `FRONTEND_URL` (and `CLIENT_ORIGIN`) to the exact Vercel URL
+  (scheme + host, no trailing slash) and redeploy the backend.
+- The CORS guard allows only that origin; everything else → 403.
 
-### Constraints (unchanged — CLAUDE.md)
-- UUIDs; base money in integer cents (never floats); JWT only in httpOnly cookies;
-  secrets server-side only (rate API key only in `rateService` + the redactor);
+## 5. Smoke test in production
+- Register → login (confirm the auth cookie is set, HTTPS, httpOnly).
+- Create a group, add a member, add a USD and a non-USD expense, view balances,
+  open the stats pages and the Currencies page (Refresh).
+- Confirm cross-origin requests from a random origin are blocked (403), and that
+  error responses never include stack traces (NODE_ENV=production).
+
+## Carried-over follow-ups (not blocking deploy)
+- **bcrypt on Node 24** may fail to build on some hosts — if Railway's build breaks on
+  bcrypt, switch to `bcryptjs` (pure JS, drop-in).
+- **Debt settlement** endpoint + UI; **PATCH expense** PERCENTAGE/WEIGHT support;
+  **winston** logger to replace `console.*`; user-facing **README.md** (clone-and-run).
+- `getBalances` SQL aggregate optimization for large groups.
+
+## Constraints (unchanged — CLAUDE.md)
+- UUIDs; integer-cents money; JWT only in httpOnly cookies; secrets server-side only;
   parameterized Prisma/$queryRaw; `{ data, error, status }` envelope; async/await.
-- Don't change `balance.js`'s contract; don't run aggregations outside `statsService`;
-  don't call the external rate API outside `rateService` / the cron / the new sync route.
-
-## After completion
-Mark the project feature-complete in STATUS.md; close out or reseed NEXT.md.

@@ -70,15 +70,17 @@ describe('groups + expenses', () => {
     expect((await b.get(`/groups/${groupId}/balances`)).status).toBe(404);
   });
 
-  it('blocks non-members from mutating a group (404)', async () => {
+  it('blocks non-members from mutating a group (403)', async () => {
     const { agent: a, user: ua } = await registerAgent(app, 'a3@example.com');
     const { agent: b } = await registerAgent(app, 'b3@example.com');
     const groupId = await createGroup(a);
 
+    // Mutations now return 403 via requireGroupMember (security decision:
+    // 403 on mutations, 404 on reads).
     const addRes = await b
       .post(`/groups/${groupId}/members`)
       .send({ email: 'b3@example.com' });
-    expect(addRes.status).toBe(404);
+    expect(addRes.status).toBe(403);
 
     const expRes = await b.post(`/groups/${groupId}/expenses`).send({
       description: 'Sneaky',
@@ -87,7 +89,7 @@ describe('groups + expenses', () => {
       splitType: 'EQUAL',
       members: [{ userId: ua.id }],
     });
-    expect(expRes.status).toBe(404);
+    expect(expRes.status).toBe(403);
   });
 
   it('only lists groups the user belongs to', async () => {

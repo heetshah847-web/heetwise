@@ -17,6 +17,13 @@ import {
   deleteExpense,
 } from '../controllers/expenseController.js';
 import { validateSplit } from '../middleware/validateSplit.js';
+import { requireGroupMember } from '../middleware/requireGroupMember.js';
+import { requireExpenseOwnership } from '../middleware/requireExpenseOwnership.js';
+import { handleValidationErrors } from '../middleware/handleValidationErrors.js';
+import {
+  groupCreateValidators,
+  expenseCreateValidators,
+} from '../middleware/validators.js';
 
 const router = Router();
 
@@ -24,24 +31,43 @@ const router = Router();
 router.use(requireAuth);
 
 // Groups
-router.post('/', createGroup);
+// Reads keep the existing 404-for-non-members behavior (controllers); writes
+// get an explicit 403 membership guard (requireGroupMember) per the security
+// decision "403 on mutations, 404 on reads".
+router.post('/', groupCreateValidators, handleValidationErrors, createGroup);
 router.get('/', listGroups);
 router.get('/:groupId', getGroup);
-router.patch('/:groupId', updateGroup);
-router.delete('/:groupId', deleteGroup);
+router.patch('/:groupId', requireGroupMember, updateGroup);
+router.delete('/:groupId', requireGroupMember, deleteGroup);
 
-// Membership
-router.post('/:groupId/members', addMember);
+// Membership (mutation → 403 guard)
+router.post('/:groupId/members', requireGroupMember, addMember);
 
-// Balances + settlements
+// Balances + settlements (read → 404 via controller)
 router.get('/:groupId/balances', getBalances);
 
 // Expenses (nested under a group)
-// validateSplit runs first so createExpense only ever sees a valid split.
-router.post('/:groupId/expenses', validateSplit, createExpense);
+router.post(
+  '/:groupId/expenses',
+  requireGroupMember,
+  expenseCreateValidators,
+  handleValidationErrors,
+  validateSplit,
+  createExpense
+);
 router.get('/:groupId/expenses', listExpenses);
 router.get('/:groupId/expenses/:expenseId', getExpense);
-router.patch('/:groupId/expenses/:expenseId', updateExpense);
-router.delete('/:groupId/expenses/:expenseId', deleteExpense);
+router.patch(
+  '/:groupId/expenses/:expenseId',
+  requireGroupMember,
+  requireExpenseOwnership,
+  updateExpense
+);
+router.delete(
+  '/:groupId/expenses/:expenseId',
+  requireGroupMember,
+  requireExpenseOwnership,
+  deleteExpense
+);
 
 export default router;

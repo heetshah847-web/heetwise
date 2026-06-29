@@ -1,4 +1,62 @@
-Phase: 5b (UI/UX overhaul) — DARK THEME APPLIED across all pages; build-verified
+Phase: 6 (security hardening) — security layers added; build + unit tests verified
+
+---
+
+## Phase 6 — Security hardening (NEW; additive only)
+
+All of this is an **additive security layer** — no existing feature, UI, response
+shape, business logic, split math, rate/stats services, or schema was changed.
+
+### Packages installed
+`helmet`, `express-validator` (`express-rate-limit` + `cors` already present).
+`csurf` was NOT installed — it's omitted from the spec's actual `npm install` command,
+never wired by any step, and is deprecated; CSRF is mitigated by httpOnly + SameSite
+cookies + single-origin CORS (noted in SECURITY_AUDIT.md).
+
+### App-wide
+- **helmet()** added as the very first middleware (clickjacking / MIME-sniff / XSS / CSP).
+- **CORS** locked to `FRONTEND_URL` (new env var; falls back to CLIENT_ORIGIN then
+  `http://localhost:5173`). No-Origin requests (tools/tests) allowed; other browser
+  origins are rejected → mapped to **403** in the error handler.
+- **Global error handler** enhanced: redacts BOTH `EXCHANGE_RATE_API_KEY` and
+  `JWT_SECRET` from logs + responses, logs with an ISO timestamp, never returns stack
+  traces; generic 500 in production, sanitized message in dev.
+
+### New middleware
+- `middleware/handleValidationErrors.js` — turns express-validator failures into a 400
+  with a field-error array (kept inside the `{ data, error, status }` envelope).
+- `middleware/validators.js` — chains for register / login / group-create /
+  expense-create. Optional fields (`name`, `currency`) use `.optional()` so existing
+  behavior (nameless register, default-USD) is preserved.
+- `middleware/requireExpenseOwnership.js` — 403 unless the requester paid the expense
+  or is the group creator (applied to PATCH/DELETE expense).
+- `middleware/requireGroupMember.js` (already existed, 403) — now also applied to all
+  group **mutation** routes.
+
+### Route protection (decision: **403 on mutations, 404 on reads** for non-members)
+- Group mutations (`PATCH/DELETE /groups/:id`, `POST /:id/members`, `POST /:id/expenses`,
+  `PATCH/DELETE /:id/expenses/:expenseId`) → `requireGroupMember` (403); expense
+  mutations also → `requireExpenseOwnership` (403).
+- Group reads keep their existing controller `assertMembership` **404** (hides existence).
+- Validators applied to POST `/auth/register`, POST `/auth/login`, POST `/groups`,
+  POST `/groups/:id/expenses`.
+- Full matrix in **`backend/src/SECURITY_AUDIT.md`** (new).
+
+### Already in place (verified, not duplicated)
+- JWT middleware checks the user still exists in the DB → 401 for deleted users.
+- bcrypt salt rounds = 12 in register.
+- Brute-force limiter: `authRateLimiter` = 10 req / 15 min / IP on `/auth`
+  (covers login + register).
+- API-key redaction (extended here to also cover JWT_SECRET).
+
+### Env
+- `FRONTEND_URL` added to `.env.example` (+ `.env`) with a Vercel-URL comment;
+  `NODE_ENV` documented.
+
+### Verified
+- All changed files pass `node --check`; `createApp()` boots with the full middleware
+  chain; **20 unit tests pass**. Integration tests need a DB (not run here), but the
+  one behavior change (non-member mutation 404→403) was reflected in `groups.test.js`.
 
 ---
 

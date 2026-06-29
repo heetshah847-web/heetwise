@@ -1,6 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import helmet from 'helmet';
 import { env } from './config/env.js';
 import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
@@ -21,10 +22,19 @@ export function createApp() {
   // Trust the proxy so rate limiting sees the real client IP in prod.
   app.set('trust proxy', 1);
 
-  // CORS configured for the frontend origin with credentials (cookies).
+  // helmet first: sets X-Frame-Options, X-Content-Type-Options, HSTS,
+  // X-XSS-Protection, Content-Security-Policy, etc. with zero config.
+  app.use(helmet());
+
+  // CORS locked to the single allowed frontend origin (FRONTEND_URL). Requests
+  // with no Origin header (server-to-server, curl, tests) are allowed; any
+  // other browser origin is rejected (mapped to 403 in the error handler).
   app.use(
     cors({
-      origin: env.clientOrigin,
+      origin: (origin, cb) => {
+        if (!origin || origin === env.frontendUrl) return cb(null, true);
+        return cb(new Error('Not allowed by CORS'));
+      },
       credentials: true,
     })
   );
