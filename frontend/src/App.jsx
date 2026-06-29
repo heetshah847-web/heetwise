@@ -12,6 +12,7 @@ import Currencies from './pages/Currencies.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import PageTransition from './components/PageTransition.jsx';
 import Fab from './components/Fab.jsx';
+import Sidebar from './components/Sidebar.jsx';
 import { useAuth } from './context/AuthContext.jsx';
 
 // Wraps a page in route-change animation + (for app pages) the auth guard.
@@ -46,7 +47,11 @@ export default function App() {
   const { user } = useAuth();
   return (
     <>
-      <AnimatedRoutes />
+      {/* Sidebar + content offset only when signed in (no routing change). */}
+      {user && <Sidebar />}
+      <div className={user ? 'md:pl-60' : ''}>
+        <AnimatedRoutes />
+      </div>
       {/* Always-visible quick-add, only when signed in. */}
       {user && <Fab />}
     </>

@@ -10,8 +10,21 @@ import {
   Tooltip,
   ReferenceLine,
 } from 'recharts';
+import { ArrowLeft } from 'lucide-react';
 import { api } from '../api/client.js';
 import { COLORS, POSITIVE, NEGATIVE, formatUSD, monthLabel } from '../theme.js';
+
+const axisProps = { stroke: '#2a2a2a', tick: { fill: '#71717a', fontSize: 12 } };
+const tooltipStyle = {
+  contentStyle: {
+    background: '#1a1a1a',
+    border: '1px solid #2a2a2a',
+    borderRadius: 8,
+    color: '#fafafa',
+  },
+  itemStyle: { color: '#fafafa' },
+  labelStyle: { color: '#71717a' },
+};
 
 export default function MemberStats() {
   const { groupId, memberId } = useParams();
@@ -25,8 +38,8 @@ export default function MemberStats() {
       .catch((err) => setError(err.message));
   }, [groupId, memberId]);
 
-  if (error) return <p style={{ padding: 24, color: 'crimson' }}>{error}</p>;
-  if (!s) return <p style={{ padding: 24 }}>Loading…</p>;
+  if (error) return <div className="p-8 text-danger">{error}</div>;
+  if (!s) return <div className="p-8 text-muted">Loading…</div>;
 
   const trend = s.monthly_net_trend.map((m) => ({
     label: monthLabel(m),
@@ -35,62 +48,71 @@ export default function MemberStats() {
   const owed = s.net_balance >= 0;
 
   return (
-    <div style={{ maxWidth: 760, margin: '32px auto', fontFamily: 'sans-serif', padding: 16 }}>
-      <p>
-        <Link to={`/groups/${groupId}`}>← Back to group</Link>
-      </p>
-      <h1>Member statistics</h1>
+    <div className="mx-auto max-w-3xl p-6 md:p-10">
+      <Link
+        to={`/groups/${groupId}`}
+        className="inline-flex items-center gap-1 text-sm text-muted hover:text-brand-400"
+      >
+        <ArrowLeft size={16} /> Back to group
+      </Link>
+      <h1 className="mt-3 text-2xl font-bold">Member statistics</h1>
 
-      <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontSize: 32, fontWeight: 700 }}>
-            {formatUSD(s.total_paid)}
-          </div>
-          <div style={{ color: '#6b7280' }}>Total paid</div>
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <div className="text-2xl font-bold">{formatUSD(s.total_paid)}</div>
+          <div className="text-sm text-muted">Total paid</div>
         </div>
-        <div>
-          <div style={{ fontSize: 32, fontWeight: 700 }}>
-            {formatUSD(s.total_consumed)}
-          </div>
-          <div style={{ color: '#6b7280' }}>Total consumed</div>
+        <div className="rounded-xl border border-border bg-surface p-5">
+          <div className="text-2xl font-bold">{formatUSD(s.total_consumed)}</div>
+          <div className="text-sm text-muted">Total consumed</div>
         </div>
       </div>
 
-      <div style={{ marginTop: 16 }}>
-        <span style={{ color: '#6b7280', marginRight: 8 }}>Net balance:</span>
-        <strong style={{ fontSize: 24, color: owed ? POSITIVE : NEGATIVE }}>
+      <div className="mt-4 rounded-xl border border-border bg-surface p-5">
+        <span className="text-sm text-muted">Net balance: </span>
+        <strong
+          className="text-2xl"
+          style={{ color: owed ? POSITIVE : NEGATIVE }}
+        >
           {owed ? '+' : '−'}
           {formatUSD(Math.abs(s.net_balance))}
         </strong>
-        <span style={{ marginLeft: 8, color: '#6b7280' }}>
+        <span className="ml-2 text-sm text-muted">
           {owed ? '(is owed money)' : '(owes money)'}
         </span>
       </div>
 
-      <h2 style={{ marginTop: 24 }}>Net balance trend (6 months)</h2>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={trend}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="label" />
-          <YAxis />
-          <Tooltip formatter={(v) => formatUSD(v)} />
-          <ReferenceLine y={0} stroke="#9ca3af" strokeWidth={2} />
-          <Line type="monotone" dataKey="net" stroke={COLORS[0]} strokeWidth={2} />
-        </LineChart>
-      </ResponsiveContainer>
+      <div className="mt-6 rounded-xl border border-border bg-surface p-5">
+        <h2 className="mb-4 text-sm font-semibold text-fg">
+          Net balance trend (6 months)
+        </h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={trend}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+            <XAxis dataKey="label" {...axisProps} />
+            <YAxis {...axisProps} />
+            <Tooltip formatter={(v) => formatUSD(v)} {...tooltipStyle} />
+            <ReferenceLine y={0} stroke="#71717a" strokeWidth={2} />
+            <Line type="monotone" dataKey="net" stroke={COLORS[0]} strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
 
-      <h2 style={{ marginTop: 24 }}>Top paid-for items</h2>
-      {s.top_categories.length === 0 ? (
-        <p>No expenses paid yet.</p>
-      ) : (
-        <ol>
-          {s.top_categories.map((c) => (
-            <li key={c.description}>
-              {c.description} — {c.count}×
-            </li>
-          ))}
-        </ol>
-      )}
+      <div className="mt-6 rounded-xl border border-border bg-surface p-5">
+        <h2 className="mb-3 text-sm font-semibold text-fg">Top paid-for items</h2>
+        {s.top_categories.length === 0 ? (
+          <p className="text-sm text-muted">No expenses paid yet.</p>
+        ) : (
+          <ol className="space-y-1 text-sm">
+            {s.top_categories.map((c) => (
+              <li key={c.description} className="flex justify-between">
+                <span>{c.description}</span>
+                <span className="text-muted">{c.count}×</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
     </div>
   );
 }

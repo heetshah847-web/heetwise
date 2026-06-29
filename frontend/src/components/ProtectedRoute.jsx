@@ -5,7 +5,12 @@ import { useAuth } from '../context/AuthContext.jsx';
 export default function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
 
-  if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
+  if (loading)
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted">
+        Loading…
+      </div>
+    );
   if (!user) return <Navigate to="/login" replace />;
   return children;
 }

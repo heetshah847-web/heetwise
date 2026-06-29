@@ -1,4 +1,45 @@
-Phase: 5b (UI/UX overhaul) — FOUNDATION done, redesign in progress; unverified at runtime
+Phase: 5b (UI/UX overhaul) — DARK THEME APPLIED across all pages; build-verified
+
+---
+
+## Phase 5b.1 — Dark theme styling pass (NEW)
+
+The whole frontend is now properly styled with a polished dark theme. **Logic,
+routing, props, API calls, and backend were not changed — styling only.**
+
+### Tailwind diagnosis
+Tailwind v4 was wired correctly all along (`@tailwindcss/vite` in `vite.config.js`,
+`@import "tailwindcss"` in `index.css`, imported in `main.jsx`) — it was NOT broken.
+The real reason the app looked unstyled: almost every page used inline `style={{}}`
+objects (plain light HTML) with **zero Tailwind classes**, so Tailwind had nothing to
+render. Fixed by rebuilding pages with utility classes.
+
+### Theme
+- `src/index.css` now defines the exact palette as Tailwind v4 `@theme` tokens:
+  bg `#0f0f0f`, surface `#1a1a1a`, border `#2a2a2a`, brand/accent `#6366f1`,
+  success `#22c55e`, danger `#ef4444`, muted `#71717a`, fg `#fafafa` — exposed as
+  `bg-bg/bg-surface/border-border/text-fg/text-muted/bg-brand-500/text-success/...`.
+- Global base layer: dark body, and EVERY input/select/textarea is dark with a subtle
+  border + indigo focus ring; dark scrollbars; dark `<option>`s.
+
+### Rebuilt in the dark theme (styling only)
+- **New**: `components/Sidebar.jsx` — fixed dark sidebar, lucide icons, indigo active
+  state (NavLink), hover transitions, user avatar + logout at the bottom. Mounted in
+  `App.jsx` (content offset `md:pl-60`); no routes changed.
+- **Pages**: Login, Register, Dashboard (tile cards), Groups (group cards), GroupDetail
+  (sticky header + Stats pill + back arrow, avatar-circle members, dark add-member
+  input, balance cards with green/red left borders, settlement arrow cards, styled
+  add-expense form card, hoverable expense cards), GroupStats / MemberStats / MyStats
+  (dark cards + dark-themed Recharts axes/grid/tooltips), Currencies, ProtectedRoute.
+- **Components retheme**: Button (indigo accent + dark secondary/ghost), Money,
+  CurrencySelect (dark popover), AddExpenseWizard, Fab (dark dialog).
+
+### Verified
+- `npm run build` succeeds (3115 modules) and emits a **~27 kB Tailwind CSS** bundle —
+  proof Tailwind is generating utilities from the new classes (a broken setup emits
+  almost none). No light-theme classes remain (grep-checked).
+- (Bundle-size warning for the JS chunk is just recharts/framer-motion/radix size —
+  not an error; out of scope for this styling pass.)
 
 ---
 

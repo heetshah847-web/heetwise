@@ -89,7 +89,7 @@ export default function Currencies() {
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
-      <Link to="/" className="text-sm text-brand-600">
+      <Link to="/" className="text-sm text-brand-400">
         ← Dashboard
       </Link>
 
@@ -98,7 +98,7 @@ export default function Currencies() {
           <span className="text-4xl">{baseMeta.flag}</span>
           <div>
             <h1 className="text-2xl font-bold">Exchange rates</h1>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted">
               Base currency: {baseMeta.name}
             </p>
           </div>
@@ -107,8 +107,8 @@ export default function Currencies() {
       </div>
 
       {/* Search */}
-      <div className="mt-6 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3">
-        <Search size={18} className="text-slate-400" />
+      <div className="mt-6 flex items-center gap-2 rounded-lg border border-border bg-surface px-3">
+        <Search size={18} className="text-muted" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -119,7 +119,7 @@ export default function Currencies() {
 
       {/* Rate cards */}
       {visible.length === 0 ? (
-        <p className="mt-8 text-center text-slate-400">
+        <p className="mt-8 text-center text-muted">
           No cached rates yet — hit refresh below.
         </p>
       ) : (
@@ -133,22 +133,22 @@ export default function Currencies() {
                 key={code}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-xl border border-slate-200 bg-white p-4"
+                className="rounded-xl border border-border bg-surface p-4"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">{m.flag}</span>
                   <div className="flex-1">
                     <div className="font-semibold">{code}</div>
-                    <div className="text-xs text-slate-500">{m.name}</div>
+                    <div className="text-xs text-muted">{m.name}</div>
                   </div>
                   <div className="text-right">
                     <div className="font-mono text-sm">
                       {value ? formatNumber(value) : '—'}
                     </div>
-                    <div className="text-[10px] text-slate-400">per 1 {base}</div>
+                    <div className="text-[10px] text-muted">per 1 {base}</div>
                   </div>
                 </div>
-                <div className="mt-3 h-1.5 w-full rounded-full bg-slate-100">
+                <div className="mt-3 h-1.5 w-full rounded-full bg-border">
                   <div
                     className="h-1.5 rounded-full bg-brand-500"
                     style={{ width: `${pct}%` }}
@@ -161,7 +161,7 @@ export default function Currencies() {
       )}
 
       {/* Converter */}
-      <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="mt-8 rounded-2xl border border-border bg-surface p-5">
         <h2 className="mb-4 text-lg font-semibold">Converter</h2>
         <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
           <ConverterInput
@@ -178,7 +178,7 @@ export default function Currencies() {
             onClick={swap}
             animate={{ rotate: swung ? 180 : 0 }}
             className="mx-auto flex h-10 w-10 items-center justify-center rounded-full
-                       border border-slate-300 bg-white hover:bg-slate-50"
+                       border border-border bg-surface hover:bg-white/5"
             aria-label="Swap currencies"
           >
             <ArrowLeftRight size={18} />
@@ -195,7 +195,7 @@ export default function Currencies() {
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-muted">
             {updatedAt
               ? `Rates updated ${formatDistanceToNow(new Date(updatedAt), {
                   addSuffix: true,
@@ -214,7 +214,7 @@ export default function Currencies() {
 
 function ConverterInput({ side, onAmount, onCode, codes }) {
   return (
-    <div className="flex flex-1 items-center gap-2 rounded-lg border border-slate-300 p-2">
+    <div className="flex flex-1 items-center gap-2 rounded-lg border border-border p-2">
       <input
         type="number"
         value={side.amount}

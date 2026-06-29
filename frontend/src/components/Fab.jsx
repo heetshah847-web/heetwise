@@ -29,8 +29,8 @@ export default function Fab() {
           whileTap={{ scale: 0.92 }}
           transition={{ type: 'spring', stiffness: 300, damping: 18 }}
           className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center
-                     rounded-full bg-brand-600 text-white shadow-lg shadow-brand-600/30
-                     hover:bg-brand-700"
+                     rounded-full bg-brand-500 text-white shadow-lg shadow-brand-500/30
+                     hover:bg-brand-600"
         >
           <Plus size={26} />
         </motion.button>
@@ -40,7 +40,7 @@ export default function Fab() {
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" />
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,460px)] -translate-x-1/2
-                     -translate-y-1/2 rounded-2xl bg-white p-6 shadow-2xl"
+                     -translate-y-1/2 rounded-2xl border border-border bg-surface p-6 text-fg shadow-2xl"
         >
           <Dialog.Title className="mb-4 text-lg font-semibold">
             Add an expense

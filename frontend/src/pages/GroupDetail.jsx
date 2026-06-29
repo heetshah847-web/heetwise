@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, BarChart3, Trash2 } from 'lucide-react';
 import { api, formatCents } from '../api/client.js';
+import { cn } from '../lib/cn.js';
 
 function memberLabel(m) {
   return m.name ? `${m.name} (${m.email})` : m.email;
+}
+
+function initialOf(m) {
+  return (m.name || m.email || '?').charAt(0).toUpperCase();
 }
 
 const SPLIT_OPTIONS = [
@@ -12,6 +18,9 @@ const SPLIT_OPTIONS = [
   { value: 'PERCENTAGE', label: 'Percentage' },
   { value: 'WEIGHT', label: 'By weight' },
 ];
+
+const sectionCls = 'rounded-xl border border-border bg-surface p-5';
+const headingCls = 'mb-4 text-xs font-semibold uppercase tracking-wide text-muted';
 
 export default function GroupDetail() {
   const { groupId } = useParams();
@@ -190,306 +199,402 @@ export default function GroupDetail() {
     }
   }
 
-  if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
-  if (!group) return <p style={{ padding: 24 }}>{error || 'Not found'}</p>;
+  if (loading)
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted">
+        Loading…
+      </div>
+    );
+  if (!group)
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted">
+        {error || 'Not found'}
+      </div>
+    );
 
   return (
-    <div style={{ maxWidth: 720, margin: '48px auto', fontFamily: 'sans-serif' }}>
-      <p>
-        <Link to="/groups">← All groups</Link>
-      </p>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <h1>{group.name}</h1>
+    <div className="mx-auto max-w-3xl pb-16">
+      {/* Sticky header */}
+      <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-border bg-bg/80 px-6 py-4 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <Link
+            to="/groups"
+            className="text-muted transition-colors hover:text-brand-400"
+            aria-label="Back to groups"
+          >
+            <ArrowLeft size={20} />
+          </Link>
+          <h1 className="text-2xl font-bold">{group.name}</h1>
+        </div>
         <Link
           to={`/groups/${groupId}/stats`}
-          style={{
-            padding: '8px 16px',
-            border: '1px solid #4f46e5',
-            borderRadius: 6,
-            textDecoration: 'none',
-          }}
+          className="inline-flex items-center gap-2 rounded-full bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
         >
-          Stats
+          <BarChart3 size={16} /> Stats
         </Link>
-      </div>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+      </header>
 
-      <section>
-        <h2>Members</h2>
-        <ul>
-          {group.members.map((m) => (
-            <li key={m.id}>
-              <Link to={`/groups/${groupId}/members/${m.id}/stats`}>
-                {memberLabel(m)}
+      <div className="space-y-6 p-6">
+        {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* Members */}
+        <section className={sectionCls}>
+          <h2 className={headingCls}>Members</h2>
+          <div className="flex flex-wrap gap-4">
+            {group.members.map((m) => (
+              <Link
+                key={m.id}
+                to={`/groups/${groupId}/members/${m.id}/stats`}
+                className="group flex w-16 flex-col items-center gap-1"
+                title={memberLabel(m)}
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/15 text-lg font-semibold text-brand-400 ring-1 ring-border transition group-hover:ring-brand-500/60">
+                  {initialOf(m)}
+                </div>
+                <span className="w-full truncate text-center text-xs text-muted">
+                  {m.name || m.email}
+                </span>
               </Link>
-            </li>
-          ))}
-        </ul>
-        <form onSubmit={handleAddMember}>
-          <input
-            type="email"
-            placeholder="Add member by email"
-            value={memberEmail}
-            onChange={(e) => setMemberEmail(e.target.value)}
-            required
-            style={{ padding: 8, width: 240 }}
-          />
-          <button type="submit" style={{ padding: '8px 16px', marginLeft: 8 }}>
-            Add
-          </button>
-        </form>
-      </section>
-
-      <section>
-        <h2>Balances</h2>
-        <p style={{ color: '#666', fontSize: 13 }}>
-          All balances are calculated in USD.
-          {ratesUpdatedAt
-            ? ` Exchange rates last updated ${new Date(
-                ratesUpdatedAt
-              ).toLocaleString()}.`
-            : ' Exchange rates have not been loaded yet.'}
-        </p>
-        <ul>
-          {balances.map((b) => (
-            <li key={b.user.id}>
-              {memberLabel(b.user)}:{' '}
-              <strong style={{ color: b.netCents < 0 ? 'crimson' : 'green' }}>
-                {b.netCents >= 0 ? 'is owed ' : 'owes '}
-                {formatCents(Math.abs(b.netCents))}
-              </strong>
-            </li>
-          ))}
-        </ul>
-        <h3>Suggested settlements</h3>
-        {settlements.length === 0 ? (
-          <p>All settled up.</p>
-        ) : (
-          <ul>
-            {settlements.map((s, i) => (
-              <li key={i}>
-                {memberLabel(s.from)} → {memberLabel(s.to)}:{' '}
-                {formatCents(s.amountCents)}
-              </li>
             ))}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <h2>Add expense</h2>
-        <form onSubmit={handleAddExpense} style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8 }}>
-            <input
-              placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={{ padding: 8, marginRight: 8 }}
-            />
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="Amount"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              style={{ padding: 8, width: 110, marginRight: 8 }}
-            />
-            <select
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-              style={{ padding: 8, marginRight: 8 }}
-            >
-              {currencies.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <label style={{ marginRight: 8 }}>
-              Paid by{' '}
-              <select
-                value={paidById}
-                onChange={(e) => setPaidById(e.target.value)}
-              >
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {memberLabel(m)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Split{' '}
-              <select
-                value={splitType}
-                onChange={(e) => setSplitType(e.target.value)}
-              >
-                {SPLIT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
-          {currency !== 'USD' && (
-            <p style={{ margin: '0 0 8px', color: '#666', fontSize: 13 }}>
-              ≈ ${(total * (rates[currency] || 0)).toFixed(2)} USD (approx, at the
-              last fetched rate — the server applies the live rate on save)
-            </p>
+          <form onSubmit={handleAddMember} className="mt-5 flex gap-2">
+            <input
+              type="email"
+              placeholder="Add member by email"
+              value={memberEmail}
+              onChange={(e) => setMemberEmail(e.target.value)}
+              required
+              className="flex-1"
+            />
+            <button
+              type="submit"
+              className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
+            >
+              Add
+            </button>
+          </form>
+        </section>
+
+        {/* Balances */}
+        <section className={sectionCls}>
+          <h2 className={headingCls}>Balances</h2>
+          <p className="mb-3 text-xs text-muted">
+            All balances are calculated in USD.
+            {ratesUpdatedAt
+              ? ` Exchange rates last updated ${new Date(
+                  ratesUpdatedAt
+                ).toLocaleString()}.`
+              : ' Exchange rates have not been loaded yet.'}
+          </p>
+          <div className="space-y-2">
+            {balances.map((b) => {
+              const positive = b.netCents >= 0;
+              return (
+                <div
+                  key={b.user.id}
+                  className={cn(
+                    'flex items-center justify-between rounded-lg border-l-4 bg-bg px-4 py-3',
+                    positive ? 'border-success' : 'border-danger'
+                  )}
+                >
+                  <span className="text-sm">{memberLabel(b.user)}</span>
+                  <span
+                    className={cn(
+                      'text-sm font-semibold',
+                      positive ? 'text-success' : 'text-danger'
+                    )}
+                  >
+                    {positive ? 'is owed ' : 'owes '}
+                    {formatCents(Math.abs(b.netCents))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <h3 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-muted">
+            Suggested settlements
+          </h3>
+          {settlements.length === 0 ? (
+            <p className="text-sm text-muted">All settled up.</p>
+          ) : (
+            <div className="space-y-2">
+              {settlements.map((s, i) => (
+                <div
+                  key={i}
+                  className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3 text-sm"
+                >
+                  <span className="font-medium">{memberLabel(s.from)}</span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-3 py-1 text-brand-400">
+                    <ArrowRight size={14} />
+                    {formatCents(s.amountCents)}
+                  </span>
+                  <span className="font-medium">{memberLabel(s.to)}</span>
+                </div>
+              ))}
+            </div>
           )}
+        </section>
 
-          {/* Per-member inputs depend on the selected split type. */}
-          <div style={{ margin: '8px 0' }}>
-            {splitType === 'EQUAL' && (
-              <ul>
-                {members.map((m) => (
-                  <li key={m.id}>{memberLabel(m)}</li>
-                ))}
-              </ul>
-            )}
-
-            {splitType === 'EXACT' && (
-              <>
-                {members.map((m) => (
-                  <div key={m.id} style={{ marginBottom: 4 }}>
-                    <span style={{ display: 'inline-block', width: 220 }}>
+        {/* Add expense */}
+        <section className={sectionCls}>
+          <h2 className={headingCls}>Add expense</h2>
+          <form onSubmit={handleAddExpense} className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block text-muted">Description</span>
+                <input
+                  placeholder="What was this for?"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-muted">Amount</span>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="w-full"
+                  />
+                  <select
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                  >
+                    {currencies.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-muted">Paid by</span>
+                <select
+                  value={paidById}
+                  onChange={(e) => setPaidById(e.target.value)}
+                  className="w-full"
+                >
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
                       {memberLabel(m)}
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={exactAmounts[m.id] ?? ''}
-                      onChange={(e) =>
-                        setExactAmounts((p) => ({ ...p, [m.id]: e.target.value }))
-                      }
-                      style={{ padding: 6, width: 100 }}
-                    />
-                  </div>
-                ))}
-                <p style={{ color: Math.abs(exactRemaining) > 0.01 ? 'crimson' : 'green' }}>
-                  Assigned ${exactAssigned.toFixed(2)} of ${total.toFixed(2)} —{' '}
-                  ${exactRemaining.toFixed(2)} unassigned
-                </p>
-              </>
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-muted">Split</span>
+                <select
+                  value={splitType}
+                  onChange={(e) => setSplitType(e.target.value)}
+                  className="w-full"
+                >
+                  {SPLIT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {currency !== 'USD' && (
+              <p className="text-xs text-muted">
+                ≈ ${(total * (rates[currency] || 0)).toFixed(2)} USD (approx, at the
+                last fetched rate — the server applies the live rate on save)
+              </p>
             )}
 
-            {splitType === 'PERCENTAGE' && (
-              <>
-                {members.map((m) => (
-                  <div key={m.id} style={{ marginBottom: 4 }}>
-                    <span style={{ display: 'inline-block', width: 220 }}>
-                      {memberLabel(m)}
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      placeholder="0"
-                      value={percentages[m.id] ?? ''}
-                      onChange={(e) =>
-                        setPercentages((p) => ({ ...p, [m.id]: e.target.value }))
-                      }
-                      style={{ padding: 6, width: 80 }}
-                    />
-                    {' %'}
-                  </div>
-                ))}
-                <p style={{ color: Math.abs(percentRemaining) > 0.01 ? 'crimson' : 'green' }}>
-                  {percentRemaining.toFixed(2)}% remaining (of 100%)
-                </p>
-              </>
-            )}
+            {/* Per-member inputs depend on the selected split type. */}
+            <div className="rounded-lg border border-border bg-bg p-4">
+              {splitType === 'EQUAL' && (
+                <ul className="space-y-1 text-sm text-muted">
+                  {members.map((m) => (
+                    <li key={m.id} className="flex justify-between">
+                      <span>{memberLabel(m)}</span>
+                      <span>even share</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-            {splitType === 'WEIGHT' && (
-              <>
-                {members.map((m) => {
-                  const w = weightOf(m.id);
-                  const share = weightSum > 0 ? (w / weightSum) * 100 : 0;
-                  return (
-                    <div key={m.id} style={{ marginBottom: 4 }}>
-                      <span style={{ display: 'inline-block', width: 220 }}>
-                        {memberLabel(m)}
-                      </span>
+              {splitType === 'EXACT' && (
+                <>
+                  {members.map((m) => (
+                    <div
+                      key={m.id}
+                      className="mb-2 flex items-center justify-between gap-2"
+                    >
+                      <span className="text-sm">{memberLabel(m)}</span>
                       <input
                         type="number"
-                        step="1"
+                        step="0.01"
                         min="0"
-                        value={weights[m.id] ?? '1'}
+                        placeholder="0.00"
+                        value={exactAmounts[m.id] ?? ''}
                         onChange={(e) =>
-                          setWeights((p) => ({ ...p, [m.id]: e.target.value }))
+                          setExactAmounts((p) => ({ ...p, [m.id]: e.target.value }))
                         }
-                        style={{ padding: 6, width: 80 }}
+                        className="w-28"
                       />
-                      <span style={{ marginLeft: 8, color: '#666' }}>
-                        ≈ {share.toFixed(1)}% of total
-                      </span>
                     </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            disabled={Boolean(reason) || submitting}
-            style={{ padding: '8px 16px' }}
-          >
-            {submitting ? 'Adding…' : 'Add expense'}
-          </button>
-          {reason && (
-            <span style={{ marginLeft: 12, color: 'crimson' }}>{reason}</span>
-          )}
-        </form>
-
-        <h2>Expenses</h2>
-        {expenses.length === 0 ? (
-          <p>No expenses yet.</p>
-        ) : (
-          <ul>
-            {expenses.map((ex) => (
-              <li key={ex.id} style={{ marginBottom: 8 }}>
-                <div>
-                  {ex.description} —{' '}
-                  <strong>
-                    {Number(ex.originalAmount).toFixed(2)} {ex.currency}
-                  </strong>{' '}
-                  ({ex.splitType}) paid by{' '}
-                  {ex.paidBy?.name || ex.paidBy?.email}{' '}
-                  <button
-                    onClick={() => handleDeleteExpense(ex.id)}
-                    style={{ marginLeft: 8 }}
+                  ))}
+                  <p
+                    className={cn(
+                      'mt-1 text-sm',
+                      Math.abs(exactRemaining) > 0.01 ? 'text-danger' : 'text-success'
+                    )}
                   >
-                    Delete
-                  </button>
-                </div>
-                {ex.currency !== 'USD' && (
-                  <div style={{ fontSize: 12, color: '#888' }}>
-                    = {formatCents(ex.amountCents)} USD
+                    Assigned ${exactAssigned.toFixed(2)} of ${total.toFixed(2)} — $
+                    {exactRemaining.toFixed(2)} unassigned
+                  </p>
+                </>
+              )}
+
+              {splitType === 'PERCENTAGE' && (
+                <>
+                  {members.map((m) => (
+                    <div
+                      key={m.id}
+                      className="mb-2 flex items-center justify-between gap-2"
+                    >
+                      <span className="text-sm">{memberLabel(m)}</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          placeholder="0"
+                          value={percentages[m.id] ?? ''}
+                          onChange={(e) =>
+                            setPercentages((p) => ({ ...p, [m.id]: e.target.value }))
+                          }
+                          className="w-20"
+                        />
+                        <span className="text-muted">%</span>
+                      </div>
+                    </div>
+                  ))}
+                  <p
+                    className={cn(
+                      'mt-1 text-sm',
+                      Math.abs(percentRemaining) > 0.01
+                        ? 'text-danger'
+                        : 'text-success'
+                    )}
+                  >
+                    {percentRemaining.toFixed(2)}% remaining (of 100%)
+                  </p>
+                </>
+              )}
+
+              {splitType === 'WEIGHT' && (
+                <>
+                  {members.map((m) => {
+                    const w = weightOf(m.id);
+                    const share = weightSum > 0 ? (w / weightSum) * 100 : 0;
+                    return (
+                      <div
+                        key={m.id}
+                        className="mb-2 flex items-center justify-between gap-2"
+                      >
+                        <span className="text-sm">{memberLabel(m)}</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={weights[m.id] ?? '1'}
+                            onChange={(e) =>
+                              setWeights((p) => ({ ...p, [m.id]: e.target.value }))
+                            }
+                            className="w-20"
+                          />
+                          <span className="text-xs text-muted">
+                            ≈ {share.toFixed(1)}% of total
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="submit"
+                disabled={Boolean(reason) || submitting}
+                className="rounded-lg bg-brand-500 px-6 py-2.5 font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? 'Adding…' : 'Add Expense'}
+              </button>
+              {reason && <span className="text-sm text-danger">{reason}</span>}
+            </div>
+          </form>
+        </section>
+
+        {/* Expenses */}
+        <section className={sectionCls}>
+          <h2 className={headingCls}>Expenses</h2>
+          {expenses.length === 0 ? (
+            <p className="text-sm text-muted">No expenses yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {expenses.map((ex) => (
+                <div
+                  key={ex.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-bg px-4 py-3 transition-colors hover:border-brand-500/50"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{ex.description}</div>
+                    <div className="text-xs text-muted">
+                      {ex.splitType} · paid by{' '}
+                      {ex.paidBy?.name || ex.paidBy?.email}
+                    </div>
                   </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {hasMore && (
-          <button onClick={loadMore} style={{ padding: '6px 12px' }}>
-            Load more
-          </button>
-        )}
-      </section>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-semibold">
+                        {Number(ex.originalAmount).toFixed(2)}{' '}
+                        <span className="text-xs text-muted">{ex.currency}</span>
+                      </div>
+                      {ex.currency !== 'USD' && (
+                        <div className="text-xs text-muted">
+                          = {formatCents(ex.amountCents)} USD
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleDeleteExpense(ex.id)}
+                      className="rounded-md p-2 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                      aria-label="Delete expense"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasMore && (
+            <button
+              onClick={loadMore}
+              className="mt-3 rounded-lg border border-border bg-surface px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
+            >
+              Load more
+            </button>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

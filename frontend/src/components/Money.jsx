@@ -19,10 +19,10 @@ export default function Money({
       <span className={sizeCls}>
         {symbolFor(code)}
         {formatNumber(amount)}{' '}
-        <span className="text-xs text-slate-400 font-normal">{code}</span>
+        <span className="text-xs text-muted font-normal">{code}</span>
       </span>
       {code !== 'USD' && usdEquivalent != null && (
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-muted">
           ≈ ${formatNumber(usdEquivalent)} USD
         </span>
       )}

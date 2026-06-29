@@ -5,10 +5,10 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 
 const VARIANTS = {
-  primary: 'bg-brand-600 text-white hover:bg-brand-700',
-  secondary: 'bg-white text-slate-800 border border-slate-300 hover:bg-slate-50',
-  ghost: 'text-slate-700 hover:bg-slate-100',
-  destructive: 'bg-red-600 text-white hover:bg-red-700',
+  primary: 'bg-brand-500 text-white hover:bg-brand-600',
+  secondary: 'bg-surface text-fg border border-border hover:bg-white/5',
+  ghost: 'text-muted hover:bg-white/5 hover:text-fg',
+  destructive: 'bg-danger text-white hover:bg-red-600',
 };
 
 // One button to rule them all:

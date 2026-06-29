@@ -25,22 +25,22 @@ export default function CurrencySelect({ value, onChange, codes }) {
       <Popover.Trigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-300
-                     bg-white px-3 py-2 text-sm hover:bg-slate-50"
+          className="inline-flex items-center gap-2 rounded-lg border border-border
+                     bg-surface px-3 py-2 text-sm text-fg hover:bg-white/5"
         >
           <span className="text-lg leading-none">{sel.flag}</span>
           <span className="font-medium">{value}</span>
-          <ChevronDown size={16} className="text-slate-400" />
+          <ChevronDown size={16} className="text-muted" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
           align="start"
           sideOffset={6}
-          className="z-50 w-72 rounded-xl border border-slate-200 bg-white p-2 shadow-xl"
+          className="z-50 w-72 rounded-xl border border-border bg-surface p-2 shadow-xl"
         >
-          <div className="mb-2 flex items-center gap-2 rounded-lg bg-slate-100 px-2">
-            <Search size={16} className="text-slate-400" />
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-bg px-2">
+            <Search size={16} className="text-muted" />
             <input
               autoFocus
               value={query}
@@ -51,7 +51,7 @@ export default function CurrencySelect({ value, onChange, codes }) {
           </div>
           <div className="max-h-64 overflow-y-auto">
             {list.length === 0 && (
-              <p className="px-2 py-4 text-center text-sm text-slate-400">
+              <p className="px-2 py-4 text-center text-sm text-muted">
                 No matches
               </p>
             )}
@@ -67,14 +67,14 @@ export default function CurrencySelect({ value, onChange, codes }) {
                     setQuery('');
                   }}
                   className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-100',
-                    code === value && 'bg-brand-50'
+                    'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-fg hover:bg-white/5',
+                    code === value && 'bg-brand-500/15'
                   )}
                 >
                   <span className="text-xl leading-none">{m.flag}</span>
                   <span className="font-medium">{code}</span>
-                  <span className="flex-1 truncate text-slate-500">{m.name}</span>
-                  {code === value && <Check size={16} className="text-brand-600" />}
+                  <span className="flex-1 truncate text-muted">{m.name}</span>
+                  {code === value && <Check size={16} className="text-brand-400" />}
                 </button>
               );
             })}

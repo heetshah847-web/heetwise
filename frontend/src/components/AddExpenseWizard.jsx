@@ -150,13 +150,13 @@ export default function AddExpenseWizard({
               <div
                 className={cn(
                   'h-1.5 rounded-full transition-colors',
-                  n <= step ? 'bg-brand-600' : 'bg-slate-200'
+                  n <= step ? 'bg-brand-500' : 'bg-border'
                 )}
               />
               <span
                 className={cn(
                   'text-xs',
-                  n === step ? 'font-medium text-brand-700' : 'text-slate-400'
+                  n === step ? 'font-medium text-brand-400' : 'text-muted'
                 )}
               >
                 {label}
@@ -182,7 +182,7 @@ export default function AddExpenseWizard({
                   <select
                     value={groupId}
                     onChange={(e) => setGroupId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-border px-3 py-2 text-sm"
                   >
                     <option value="">Select a group…</option>
                     {groups.map((g) => (
@@ -205,11 +205,11 @@ export default function AddExpenseWizard({
                 </div>
 
                 {currency !== 'USD' && (
-                  <div className="rounded-xl bg-brand-50 p-4 text-center text-sm">
-                    <div className="text-2xl font-semibold text-brand-700">
+                  <div className="rounded-xl bg-brand-500/10 p-4 text-center text-sm">
+                    <div className="text-2xl font-semibold text-brand-400">
                       ≈ {formatMoney(usdPreview, 'USD')} USD
                     </div>
-                    <div className="mt-1 text-slate-500">
+                    <div className="mt-1 text-muted">
                       1 {currency} = {rate ? rate.toFixed(4) : '—'} USD
                       {ratesUpdatedAt &&
                         ` · updated ${formatDistanceToNow(new Date(ratesUpdatedAt), {
@@ -223,7 +223,7 @@ export default function AddExpenseWizard({
                   placeholder="What was this for?"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border px-3 py-2 text-sm"
                 />
               </div>
             )}
@@ -242,13 +242,13 @@ export default function AddExpenseWizard({
                         className={cn(
                           'flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition',
                           active
-                            ? 'border-brand-600 bg-brand-50'
-                            : 'border-slate-200 hover:border-slate-300'
+                            ? 'border-brand-500 bg-brand-500/10'
+                            : 'border-border hover:border-border'
                         )}
                       >
-                        <Icon size={20} className={active ? 'text-brand-600' : 'text-slate-500'} />
+                        <Icon size={20} className={active ? 'text-brand-400' : 'text-muted'} />
                         <span className="font-medium">{c.label}</span>
-                        <span className="text-xs text-slate-500">{c.desc}</span>
+                        <span className="text-xs text-muted">{c.desc}</span>
                       </button>
                     );
                   })}
@@ -259,7 +259,7 @@ export default function AddExpenseWizard({
                   <select
                     value={paidById}
                     onChange={(e) => setPaidById(e.target.value)}
-                    className="ml-1 rounded-lg border border-slate-300 px-2 py-1"
+                    className="ml-1 rounded-lg border border-border px-2 py-1"
                   >
                     {members.map((m) => (
                       <option key={m.id} value={m.id}>
@@ -286,7 +286,7 @@ export default function AddExpenseWizard({
                           onChange={(e) =>
                             setExactAmounts((p) => ({ ...p, [m.id]: e.target.value }))
                           }
-                          className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                          className="w-24 rounded-lg border border-border px-2 py-1 text-sm"
                         />
                       )}
                       {splitType === 'PERCENTAGE' && (
@@ -298,7 +298,7 @@ export default function AddExpenseWizard({
                           onChange={(e) =>
                             setPercentages((p) => ({ ...p, [m.id]: e.target.value }))
                           }
-                          className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                          className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
                         />
                       )}
                       {splitType === 'WEIGHT' && (
@@ -309,17 +309,17 @@ export default function AddExpenseWizard({
                           onChange={(e) =>
                             setWeights((p) => ({ ...p, [m.id]: e.target.value }))
                           }
-                          className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                          className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
                         />
                       )}
                       {splitType === 'EQUAL' && (
-                        <span className="text-xs text-slate-400">even share</span>
+                        <span className="text-xs text-muted">even share</span>
                       )}
                     </div>
                   ))}
                 </motion.div>
                 {step2Reason && (
-                  <p className="text-sm text-red-600">{step2Reason}</p>
+                  <p className="text-sm text-danger">{step2Reason}</p>
                 )}
               </div>
             )}
@@ -331,20 +331,20 @@ export default function AddExpenseWizard({
                     <motion.div
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
-                      className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100"
+                      className="flex h-16 w-16 items-center justify-center rounded-full bg-success/15"
                     >
-                      <Check size={36} className="text-green-600" />
+                      <Check size={36} className="text-success" />
                     </motion.div>
                     <p className="font-medium">Added!</p>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-slate-200 p-4">
+                  <div className="rounded-xl border border-border p-4">
                     <div className="text-3xl font-bold">
                       {formatMoney(total, currency)}{' '}
-                      <span className="text-sm font-normal text-slate-400">{currency}</span>
+                      <span className="text-sm font-normal text-muted">{currency}</span>
                     </div>
                     {currency !== 'USD' && (
-                      <div className="text-sm text-slate-500">
+                      <div className="text-sm text-muted">
                         ≈ {formatMoney(usdPreview, 'USD')} USD
                       </div>
                     )}
@@ -402,7 +402,7 @@ export default function AddExpenseWizard({
 function Row({ k, v }) {
   return (
     <div className="flex justify-between gap-4">
-      <dt className="text-slate-500">{k}</dt>
+      <dt className="text-muted">{k}</dt>
       <dd className="font-medium">{v}</dd>
     </div>
   );
