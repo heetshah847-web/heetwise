@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
+const { PrismaClient } = pkg;
 
 // Single shared Prisma client instance for the whole app.
-// Prisma parameterizes every query, so there is no string concatenation.
 export const prisma = new PrismaClient();
