@@ -5,8 +5,12 @@
       "src": "src/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["src/**", "node_modules/@prisma/**", "prisma/**"],
-        "buildCommand": "npx prisma generate"
+        "includeFiles": [
+          "src/**",
+          "prisma/**",
+          "node_modules/.prisma/**",
+          "node_modules/@prisma/client/**"
+        ]
       }
     }
   ],
