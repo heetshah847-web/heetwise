@@ -1,5 +1,14 @@
 import pkg from '@prisma/client';
-const { PrismaClient } = pkg;
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 
-// Single shared Prisma client instance for the whole app.
-export const prisma = new PrismaClient();
+const { PrismaClient } = pkg;
+const { Pool } = pg;
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+const adapter = new PrismaPg(pool);
+
+export const prisma = new PrismaClient({ adapter });
