@@ -68,3 +68,7 @@ export function createApp() {
 
   return app;
 }
+
+// Default export for Vercel serverless: a ready-to-use Express app instance.
+const app = createApp();
+export default app;

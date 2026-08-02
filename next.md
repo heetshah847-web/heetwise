@@ -1,8 +1,16 @@
 # NEXT — Phase 7: Deployment
 
-Security hardening (Phase 6) is done. The final phase is deploying the app:
-**backend + PostgreSQL on Railway**, **frontend on Vercel**, with environment
-variables set on both and CORS pointed at the live Vercel URL.
+Security hardening (Phase 6) is done. The final phase is deploying the app.
+
+> **Plan update (Vercel serverless backend):** the backend is now being deployed as a
+> **Vercel serverless function**, not a long-running Railway service. Serverless can't
+> run background jobs, so `node-cron` was removed from `src/index.js` and the hourly
+> exchange-rate refresh is now triggered **manually via `POST /rates/sync`**. `app.js`
+> now has `export default app` for Vercel to use as the handler. **Consequences to wire
+> up during deploy:** point Vercel at `backend/` with a serverless entry that uses the
+> app's default export; keep `exchange_rates` fresh by hitting `POST /rates/sync` on a
+> schedule (e.g. a Vercel Cron or external scheduler) instead of the in-process cron.
+> The Railway steps below are superseded for the backend but kept for reference.
 
 ## Pre-flight (do these first)
 1. `cd backend && npm install` and `cd frontend && npm install` (both verified to

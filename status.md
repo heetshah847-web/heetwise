@@ -1,4 +1,22 @@
-Phase: 6 (security hardening) — security layers added; build + unit tests verified
+Phase: 7 (deployment) — backend adapted for Vercel serverless
+
+---
+
+## Phase 7 — Vercel serverless adaptation (NEW; no logic/route/DB changes)
+
+Backend is being deployed as a **Vercel serverless function**, which cannot run
+background jobs. Two minimal changes were made — no routes, middleware, business
+logic, or database code was touched:
+
+- **`backend/src/index.js`** — removed the `node-cron` import and the hourly
+  `cron.schedule('0 * * * *', …)` call. The startup `refreshRates('startup refresh')`
+  is kept. Exchange-rate refresh is now triggered **manually** via the existing
+  `POST /rates/sync` endpoint (`syncRatesNow`) instead of the cron.
+- **`backend/src/app.js`** — added `export default app` (a `createApp()` instance) at
+  the end so Vercel can use the Express app as the serverless handler. `createApp()`
+  is unchanged and still used by `index.js`.
+
+Verified: both files pass `node --check`.
 
 ---
 

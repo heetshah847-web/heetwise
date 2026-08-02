@@ -1,4 +1,3 @@
-import cron from 'node-cron';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
@@ -20,11 +19,10 @@ async function refreshRates(reason) {
 const server = app.listen(env.port, () => {
   console.log(`API listening on http://localhost:${env.port}`);
 
-  // Populate rates immediately so the table isn't empty for an hour.
+  // Populate rates immediately so the table isn't empty at startup.
+  // Hourly refresh via node-cron was removed for Vercel serverless (no
+  // background jobs); rates are refreshed manually via POST /rates/sync.
   refreshRates('startup refresh');
-
-  // Then refresh once an hour while the server runs.
-  cron.schedule('0 * * * *', () => refreshRates('hourly refresh'));
 });
 
 // Graceful shutdown: disconnect Prisma and close the server.
