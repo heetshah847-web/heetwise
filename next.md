@@ -2,7 +2,23 @@
 
 Security hardening (Phase 6) is done. Phase 8 added invitations, settlements,
 notifications, tick-based splits, multi-origin CORS, and Pusher real-time.
+Phase 9 added the cross-group **Summary** page + `GET /balances/summary`.
 Deploy steps below; **the new env vars are the important part.**
+
+## Phase 9 notes (no new env vars / migrations)
+- `GET /balances/summary` and `pages/Summary.jsx` are additive — **no schema
+  change, no migration, no new env var**. They reuse existing tables (expenses,
+  splits, group_members) and the existing settlement endpoint. Nothing extra to
+  configure on deploy.
+- Possible follow-ups:
+  - The Summary and the sidebar badge each fetch `/balances/summary`; consider a
+    shared context/cache so a page + sidebar load don't double-fetch, and so
+    settling up refreshes both without a route change.
+  - Optionally make the Summary live via Pusher (`expense-added`/`expense-settled`)
+    like GroupDetail, instead of manual Refresh.
+  - The endpoint reduces in JS after one query; if groups grow very large, push the
+    per-pair sum into a parameterized `$queryRaw` aggregate (same idea as the
+    `getBalances` optimization already noted below).
 
 ## Phase 8 deploy checklist (do these on the live deploy)
 
@@ -110,8 +126,9 @@ The final phase is deploying the app.
 ## Carried-over follow-ups (not blocking deploy)
 - **bcrypt on Node 24** may fail to build on some hosts — if Railway's build breaks on
   bcrypt, switch to `bcryptjs` (pure JS, drop-in).
-- **Debt settlement** endpoint + UI; **PATCH expense** PERCENTAGE/WEIGHT support;
-  **winston** logger to replace `console.*`; user-facing **README.md** (clone-and-run).
+- **Debt settlement** endpoint + UI — DONE (Phase 8 endpoint; Phase 9 Summary UI).
+  **PATCH expense** PERCENTAGE/WEIGHT support; **winston** logger to replace
+  `console.*`; user-facing **README.md** (clone-and-run).
 - `getBalances` SQL aggregate optimization for large groups.
 
 ## Constraints (unchanged — CLAUDE.md)

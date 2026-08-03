@@ -69,6 +69,9 @@ export const api = {
   // Notifications (unsettled debts older than 7 days)
   getNotifications: () => request('/notifications'),
 
+  // Cross-group balance summary (net per person across all shared groups)
+  getBalancesSummary: () => request('/balances/summary'),
+
   // Expenses
   listExpenses: (groupId, { cursor, limit } = {}) => {
     const qs = new URLSearchParams();

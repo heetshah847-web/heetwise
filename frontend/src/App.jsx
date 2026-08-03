@@ -10,6 +10,7 @@ import MemberStats from './pages/MemberStats.jsx';
 import MyStats from './pages/MyStats.jsx';
 import Currencies from './pages/Currencies.jsx';
 import Requests from './pages/Requests.jsx';
+import Summary from './pages/Summary.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import PageTransition from './components/PageTransition.jsx';
 import Fab from './components/Fab.jsx';
@@ -41,6 +42,7 @@ function AnimatedRoutes() {
         <Route path="/dashboard/stats" element={page(<MyStats />)} />
         <Route path="/currencies" element={page(<Currencies />)} />
         <Route path="/requests" element={page(<Requests />)} />
+        <Route path="/summary" element={page(<Summary />)} />
       </Routes>
     </AnimatePresence>
   );

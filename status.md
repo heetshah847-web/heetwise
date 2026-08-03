@@ -1,4 +1,70 @@
-Phase: 8 (invitations, settlements, notifications, real-time, multi-origin CORS)
+Phase: 9 (cross-group balance Summary page + endpoint)
+
+---
+
+## Phase 9 — Cross-group balance summary (NEW; additive only)
+
+A new **Summary** page + a new endpoint that nets out what every person owes the
+current user (and vice-versa) across ALL their groups combined. Nothing existing
+was changed — no routes, controllers, UI, or schema were touched; this is purely
+additive.
+
+### Backend — new endpoint
+- **`GET /balances/summary`** (auth) in the **new** file
+  `src/routes/balanceRoutes.js`, mounted in `app.js` under **`/balances`**.
+  Handler: `controllers/balanceController.js` → `getBalancesSummary`.
+- Computation (one Prisma round-trip: `group.findMany` where the user is a member,
+  selecting members→user and expenses→splits, then reduced in memory):
+  for the current user, for every OTHER user they share ≥1 group with, net =
+  Σ(other's split cents in expenses the CURRENT user paid)  −  Σ(current user's
+  split cents in expenses the OTHER user paid), summed across ALL shared groups.
+  **Positive ⇒ the other person owes the current user; negative ⇒ current user
+  owes them.** All math uses the authoritative `split.amountCents` (already USD) —
+  exchange rates are NEVER re-applied here (same rule as `utils/balance.js`).
+- Response `data`: `{ balances[], totalOwedToMe, totalIOwe, currency:'USD',
+  generatedAt }`. Each `balances[]` item:
+  `{ otherUserId, otherUserName, otherUserEmail, netAmountCents (number),
+  currency:'USD', groupBreakdown:[{ groupId, groupName, netAmountCents }] }`.
+  `groupBreakdown` includes only groups with a non-zero contribution (signed).
+  `totalOwedToMe` = Σ positive nets; `totalIOwe` = Σ |negative nets| (absolute).
+  Co-members with a net of exactly zero are still returned (empty breakdown) so
+  the client can distinguish "shared but settled" from "no shared groups".
+
+### Frontend — new Summary page
+- **`pages/Summary.jsx`**, route **`/summary`** (in `App.jsx`, auth-guarded), added
+  to the sidebar as **Summary** with a **balance (`Scale`) icon**.
+- Three sections:
+  1. **Hero cards** — "Total you are owed" (green) + "Total you owe" (red), then a
+     net card: positive ⇒ "Overall you are owed $X" (green), negative ⇒ "Overall
+     you owe $X" (red), zero ⇒ "All settled up" (green).
+  2. **Owes you** — one card per person (avatar initial, name, email, total in big
+     green text). Expand to reveal the per-group breakdown; **Settle Up** opens a
+     modal (full amount or custom).
+  3. **You owe** — same card design, amounts in red, Settle Up (you pay them).
+- Settle Up: the modal offers full or custom amount and, on confirm, greedily
+  allocates it across the person's contributing groups and calls
+  **`POST /groups/:groupId/settlements`** once per group (direction picks payer/
+  payee: they-owe-you ⇒ from=them/to=you; you-owe ⇒ from=you/to=them). Re-fetches
+  the summary afterwards.
+- **Skeleton** loading state; **empty state** ("You are all settled up" with a
+  celebratory illustration) when both totals are zero; a **Last updated <relative>**
+  line (from `generatedAt`) and a **Refresh** button (spinning icon) at the bottom/top.
+- `api/client.js` gained `getBalancesSummary()`.
+
+### Sidebar debt badge
+- `components/Sidebar.jsx` fetches the summary on mount + on every route change and
+  shows a **red count badge** on the Summary nav item = number of people the user
+  owes money to (`netAmountCents < 0`), so outstanding debts are visible at a glance.
+  Fetch failures are silent (non-critical UI).
+
+### Verified
+- Backend: all new files pass `node --check`; **20/20 unit tests pass**; `app.js`
+  imports/boots cleanly with the new `/balances` mount.
+- Frontend: `npm run build` succeeds (3123 modules, +1 for the new page).
+- Design decisions: balances shown here are **raw pairwise** nets (who paid for
+  whose share), per the spec — NOT the greedy `simplifyDebts` plan used elsewhere;
+  the two can differ and that's intentional. Settlements remain an audit trail and
+  do not alter how balances are computed.
 
 ---
 

@@ -7,6 +7,7 @@ import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
 import statsRoutes from './routes/stats.js';
 import invitationRoutes from './routes/invitationRoutes.js';
+import balanceRoutes from './routes/balanceRoutes.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
 import { getNotifications } from './controllers/notificationController.js';
@@ -59,6 +60,9 @@ export function createApp() {
 
   // Group invitations (invitee-facing): list pending, accept, decline.
   app.use('/invitations', invitationRoutes);
+
+  // Cross-group balance summary for the current user.
+  app.use('/balances', balanceRoutes);
 
   // Notifications: unsettled debts older than 7 days for the current user.
   app.get('/notifications', requireAuth, getNotifications);
