@@ -10,7 +10,11 @@ import invitationRoutes from './routes/invitationRoutes.js';
 import balanceRoutes from './routes/balanceRoutes.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
-import { getNotifications } from './controllers/notificationController.js';
+import {
+  getNotifications,
+  subscribePush,
+  sendReminders,
+} from './controllers/notificationController.js';
 import {
   getCurrencies,
   getRatesMeta,
@@ -66,6 +70,10 @@ export function createApp() {
 
   // Notifications: unsettled debts older than 7 days for the current user.
   app.get('/notifications', requireAuth, getNotifications);
+  // Save a browser Web Push subscription for the current user.
+  app.post('/notifications/subscribe', requireAuth, subscribePush);
+  // Daily reminder sweep — hit by the Vercel cron (unauthenticated by design).
+  app.get('/notifications/send-reminders', sendReminders);
 
   // Multi-currency: available currencies + latest rates (display only).
   app.get('/currencies', requireAuth, getCurrencies);

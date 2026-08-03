@@ -3,7 +3,11 @@ import { sendSuccess } from '../utils/response.js';
 import { requireString, optionalString } from '../utils/validation.js';
 import { ForbiddenError } from '../utils/errors.js';
 import { assertMembership } from '../services/membership.js';
-import { computeBalances, simplifyDebts } from '../utils/balance.js';
+import {
+  computeBalances,
+  simplifyDebts,
+  withoutSettledSplits,
+} from '../utils/balance.js';
 
 function publicUser(user) {
   return { id: user.id, email: user.email, name: user.name };
@@ -116,15 +120,17 @@ export async function getBalances(req, res, next) {
     const { groupId } = req.params;
     await assertMembership(groupId, req.user.id);
 
-    const expenses = await prisma.expense.findMany({
+    const rawExpenses = await prisma.expense.findMany({
       where: { groupId },
       select: {
         paidById: true,
         amountCents: true,
-        splits: { select: { userId: true, amountCents: true } },
+        splits: { select: { userId: true, amountCents: true, isSettled: true } },
       },
     });
 
+    // Exclude already-settled splits so a settled debt shows as zero.
+    const expenses = withoutSettledSplits(rawExpenses);
     const balances = computeBalances(expenses);
     const settlements = simplifyDebts(balances);
 

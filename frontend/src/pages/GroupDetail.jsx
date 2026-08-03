@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, BarChart3, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  Trash2,
+  CheckCircle2,
+} from 'lucide-react';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { api, formatCents } from '../api/client.js';
 import { cn } from '../lib/cn.js';
@@ -34,7 +41,9 @@ export default function GroupDetail() {
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(false);
   const [balances, setBalances] = useState([]);
-  const [settlements, setSettlements] = useState([]);
+  const [settlements, setSettlements] = useState([]); // suggested (simplified) plan
+  const [history, setHistory] = useState([]); // recorded past settlements
+  const [tab, setTab] = useState('activity'); // 'activity' | 'history'
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -63,12 +72,13 @@ export default function GroupDetail() {
   const load = useCallback(async () => {
     setError('');
     try {
-      const [g, e, b, c, r] = await Promise.all([
+      const [g, e, b, c, r, h] = await Promise.all([
         api.getGroup(groupId),
         api.listExpenses(groupId),
         api.getBalances(groupId),
         api.listCurrencies(),
         api.getRates(),
+        api.listSettlements(groupId),
       ]);
       setGroup(g.group);
       setExpenses(e.expenses);
@@ -76,6 +86,7 @@ export default function GroupDetail() {
       setHasMore(e.hasMore);
       setBalances(b.balances);
       setSettlements(b.settlements);
+      setHistory(h.settlements);
       setCurrencies(c.currencies.length ? c.currencies : ['USD']);
       setRates(r.rates || {});
       setRatesUpdatedAt(r.updatedAt || null);
@@ -92,18 +103,35 @@ export default function GroupDetail() {
     load();
   }, [load]);
 
-  // Refresh only the balances + settlements (used after live events).
+  // Refresh balances + settlement history (used after live events / settling).
   const refreshBalances = useCallback(async () => {
     try {
-      const b = await api.getBalances(groupId);
+      const [b, h] = await Promise.all([
+        api.getBalances(groupId),
+        api.listSettlements(groupId),
+      ]);
       setBalances(b.balances);
       setSettlements(b.settlements);
+      setHistory(h.settlements);
     } catch {
       /* non-critical */
     }
   }, [groupId]);
 
-  // Real-time: prepend expenses added by anyone, refresh balances on settle.
+  // Refetch the expense list (settling can change what's owed / shown).
+  const refreshExpenses = useCallback(async () => {
+    try {
+      const e = await api.listExpenses(groupId);
+      setExpenses(e.expenses);
+      setNextCursor(e.nextCursor);
+      setHasMore(e.hasMore);
+    } catch {
+      /* non-critical */
+    }
+  }, [groupId]);
+
+  // Real-time: prepend expenses added by anyone; on a settlement, refetch the
+  // balances, expense list and settlement history so the cascade is instant.
   usePusher(`group-${groupId}`, {
     'expense-added': (payload) => {
       const ex = payload?.expense;
@@ -113,7 +141,10 @@ export default function GroupDetail() {
       );
       refreshBalances();
     },
-    'expense-settled': () => refreshBalances(),
+    'settlement-created': () => {
+      refreshBalances();
+      refreshExpenses();
+    },
   });
 
   async function loadMore() {
@@ -241,18 +272,46 @@ export default function GroupDetail() {
     }
   }
 
-  // Build a settle intent for a suggested settlement that involves the viewer.
+  // Build a settle intent. Only ever called for a settlement where the OTHER
+  // person owes the current user (s.from is the debtor, s.to is the viewer).
   function settleFor(s) {
+    const other = s.from;
     setSettleIntent({
-      groupId,
-      groupName: group?.name,
-      fromUserId: s.from.id,
-      fromName: s.from.id === user?.id ? 'You' : s.from.name || s.from.email,
-      toUserId: s.to.id,
-      toName: s.to.id === user?.id ? 'You' : s.to.name || s.to.email,
+      currentUserId: user.id,
+      otherUserId: other.id,
+      otherName: other.name || other.email,
+      otherEmail: other.email,
+      direction: 'owes_you',
       amountCents: s.amountCents,
+      groups: [
+        { groupId, groupName: group?.name, amountCents: s.amountCents },
+      ],
     });
   }
+
+  // Display name for a settlement party (the viewer shows as "You").
+  const personName = (u) =>
+    u?.id === user?.id ? 'You' : u?.name || u?.email || 'Someone';
+
+  // Combined activity feed: expenses + recorded settlements, newest first, so a
+  // fresh settlement appears at the top with its green checkmark.
+  const activity = useMemo(() => {
+    const items = [
+      ...expenses.map((ex) => ({
+        kind: 'expense',
+        id: ex.id,
+        date: ex.createdAt,
+        data: ex,
+      })),
+      ...history.map((s) => ({
+        kind: 'settlement',
+        id: s.id,
+        date: s.settledAt,
+        data: s,
+      })),
+    ];
+    return items.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [expenses, history]);
 
   if (loading)
     return (
@@ -376,8 +435,10 @@ export default function GroupDetail() {
           ) : (
             <div className="space-y-2">
               {settlements.map((s, i) => {
-                const involvesMe =
-                  s.from.id === user?.id || s.to.id === user?.id;
+                // Show "Settle Up" only when that specific person owes the
+                // current user (the viewer is the payee: s.to is me).
+                const owesMe = s.to.id === user?.id && s.from.id !== user?.id;
+                const iOwe = s.from.id === user?.id;
                 return (
                   <div
                     key={i}
@@ -389,14 +450,19 @@ export default function GroupDetail() {
                       {formatCents(s.amountCents)}
                     </span>
                     <span className="font-medium">{memberLabel(s.to)}</span>
-                    {involvesMe && (
+                    {owesMe ? (
                       <button
                         onClick={() => settleFor(s)}
-                        className="ml-auto rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-600"
+                        className="ml-auto rounded-lg bg-success px-3 py-1.5 text-xs font-medium text-white transition-colors hover:brightness-110"
                       >
                         Settle Up
                       </button>
-                    )}
+                    ) : iOwe ? (
+                      // The viewer owes here — informational only, no action.
+                      <span className="ml-auto rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted">
+                        Pay Back
+                      </span>
+                    ) : null}
                   </div>
                 );
               })}
@@ -596,56 +662,136 @@ export default function GroupDetail() {
           </form>
         </section>
 
-        {/* Expenses */}
+        {/* Activity (expenses + settlements) and Settlement History tabs */}
         <section className={sectionCls}>
-          <h2 className={headingCls}>Expenses</h2>
-          {expenses.length === 0 ? (
-            <p className="text-sm text-muted">No expenses yet.</p>
+          <div className="mb-4 flex items-center gap-1 border-b border-border">
+            {[
+              { id: 'activity', label: 'Activity' },
+              {
+                id: 'history',
+                label: `Settlement History${
+                  history.length ? ` (${history.length})` : ''
+                }`,
+              },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                  tab === t.id
+                    ? 'border-brand-500 text-fg'
+                    : 'border-transparent text-muted hover:text-fg'
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'activity' ? (
+            activity.length === 0 ? (
+              <p className="text-sm text-muted">No activity yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {activity.map((item) =>
+                  item.kind === 'settlement' ? (
+                    <div
+                      key={`s-${item.id}`}
+                      className="flex items-center gap-3 rounded-lg border border-success/30 bg-success/5 px-4 py-3"
+                    >
+                      <CheckCircle2
+                        size={18}
+                        className="shrink-0 text-success"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">
+                          {personName(item.data.from)} settled up with{' '}
+                          {personName(item.data.to)}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {format(new Date(item.data.settledAt), 'PP')}
+                        </div>
+                      </div>
+                      <div className="font-semibold text-success">
+                        {formatCents(item.data.amountCents)}
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-bg px-4 py-3 transition-colors hover:border-brand-500/50"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {item.data.description}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {item.data.splitType} · paid by{' '}
+                          {item.data.paidBy?.name || item.data.paidBy?.email}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="font-semibold">
+                            {Number(item.data.originalAmount).toFixed(2)}{' '}
+                            <span className="text-xs text-muted">
+                              {item.data.currency}
+                            </span>
+                          </div>
+                          {item.data.currency !== 'USD' && (
+                            <div className="text-xs text-muted">
+                              = {formatCents(item.data.amountCents)} USD
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteExpense(item.data.id)}
+                          className="rounded-md p-2 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                          aria-label="Delete expense"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                )}
+                {hasMore && (
+                  <button
+                    onClick={loadMore}
+                    className="mt-3 rounded-lg border border-border bg-surface px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
+                  >
+                    Load more
+                  </button>
+                )}
+              </div>
+            )
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted">No settlements recorded yet.</p>
           ) : (
-            <div className="space-y-2">
-              {expenses.map((ex) => (
+            <div className="space-y-3">
+              {history.map((s) => (
                 <div
-                  key={ex.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-bg px-4 py-3 transition-colors hover:border-brand-500/50"
+                  key={s.id}
+                  className="flex items-start gap-3 rounded-xl border border-border bg-bg p-4"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{ex.description}</div>
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">
+                      {personName(s.from)} paid {personName(s.to)}
+                    </div>
                     <div className="text-xs text-muted">
-                      {ex.splitType} · paid by{' '}
-                      {ex.paidBy?.name || ex.paidBy?.email}
+                      {format(new Date(s.settledAt), 'PPp')}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <div className="font-semibold">
-                        {Number(ex.originalAmount).toFixed(2)}{' '}
-                        <span className="text-xs text-muted">{ex.currency}</span>
-                      </div>
-                      {ex.currency !== 'USD' && (
-                        <div className="text-xs text-muted">
-                          = {formatCents(ex.amountCents)} USD
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleDeleteExpense(ex.id)}
-                      className="rounded-md p-2 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                      aria-label="Delete expense"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                  <div className="font-semibold text-success">
+                    {formatCents(s.amountCents)}
                   </div>
                 </div>
               ))}
             </div>
-          )}
-          {hasMore && (
-            <button
-              onClick={loadMore}
-              className="mt-3 rounded-lg border border-border bg-surface px-4 py-2 text-sm text-muted transition-colors hover:text-fg"
-            >
-              Load more
-            </button>
           )}
         </section>
       </div>
@@ -653,7 +799,10 @@ export default function GroupDetail() {
       <SettleUpModal
         intent={settleIntent}
         onClose={() => setSettleIntent(null)}
-        onSettled={() => refreshBalances()}
+        onSettled={() => {
+          refreshBalances();
+          refreshExpenses();
+        }}
       />
     </div>
   );

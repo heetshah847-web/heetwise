@@ -48,18 +48,19 @@ export default function NotificationBell() {
   }
 
   function openSettle(n) {
-    const you = { id: user.id, name: 'You' };
-    const other = { id: n.otherPersonId, name: n.otherPersonName };
-    const from = n.direction === 'you_owe' ? you : other;
-    const to = n.direction === 'you_owe' ? other : you;
     setIntent({
-      groupId: n.groupId,
-      groupName: n.groupName,
-      fromUserId: from.id,
-      fromName: from.name,
-      toUserId: to.id,
-      toName: to.name,
+      currentUserId: user.id,
+      otherUserId: n.otherPersonId,
+      otherName: n.otherPersonName,
+      direction: n.direction, // 'you_owe' | 'owes_you'
       amountCents: n.amountCents,
+      groups: [
+        {
+          groupId: n.groupId,
+          groupName: n.groupName,
+          amountCents: n.amountCents,
+        },
+      ],
     });
   }
 

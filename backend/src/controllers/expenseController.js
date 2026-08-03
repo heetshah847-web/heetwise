@@ -16,8 +16,12 @@ import { assertMembership, getGroupMemberIds } from '../services/membership.js';
 import { computeEqualSplits, buildExactSplits } from '../utils/split.js';
 import { calculateSplits } from '../services/splitService.js';
 import { getRate } from '../services/rateService.js';
-import { invalidateGroupStats } from '../services/cacheService.js';
+import {
+  invalidateGroupStats,
+  invalidateSummaries,
+} from '../services/cacheService.js';
 import { triggerEvent, groupChannel } from '../services/pusherService.js';
+import { sendPushNotification } from '../services/notificationService.js';
 
 // EQUAL/EXACT are the legacy two; PERCENTAGE/WEIGHT were added in the smart
 // split phase. The full set is enforced by validateSplit + splitService.
@@ -203,8 +207,10 @@ export async function createExpense(req, res, next) {
       });
     });
 
-    // A new expense changes every group stat — drop the cached entries.
+    // A new expense changes every group stat and every member's summary — drop
+    // the cached entries so both recompute on next read.
     invalidateGroupStats(groupId);
+    invalidateSummaries([...memberIds]);
 
     // Broadcast so other members viewing this group see it live (no-op if
     // Pusher isn't configured).
@@ -212,6 +218,26 @@ export async function createExpense(req, res, next) {
     await triggerEvent(groupChannel(groupId), 'expense-added', {
       expense: shaped,
     });
+
+    // Push every group member EXCEPT the payer a "new expense" notification.
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { name: true },
+    });
+    const adderName = req.user.name || req.user.email || 'Someone';
+    const amountUsd = (amountCents / 100).toFixed(2);
+    await Promise.all(
+      [...memberIds]
+        .filter((id) => id !== paidById)
+        .map((id) =>
+          sendPushNotification(id, {
+            title: `New expense in ${group?.name ?? 'your group'}`,
+            body: `${adderName} added an expense: ${desc} for $${amountUsd} in ${
+              group?.name ?? 'your group'
+            }`,
+          })
+        )
+    );
 
     return sendSuccess(res, 201, { expense: shaped });
   } catch (err) {
@@ -310,6 +336,9 @@ export async function updateExpense(req, res, next) {
         include: { paidBy: true, splits: { include: { user: true } } },
       });
     });
+    // Editing splits changes balances + stats — drop the cached entries.
+    invalidateGroupStats(groupId);
+    invalidateSummaries([...(await getGroupMemberIds(groupId))]);
     return sendSuccess(res, 200, { expense: publicExpense(expense) });
   } catch (err) {
     return next(err);
@@ -322,7 +351,11 @@ export async function deleteExpense(req, res, next) {
     const { groupId, expenseId } = req.params;
     await assertMembership(groupId, req.user.id);
     await loadGroupExpense(groupId, expenseId); // 404 if not in group
+    const memberIds = await getGroupMemberIds(groupId);
     await prisma.expense.delete({ where: { id: expenseId } });
+    // Removing an expense changes balances + stats — drop the cached entries.
+    invalidateGroupStats(groupId);
+    invalidateSummaries([...memberIds]);
     return sendSuccess(res, 200, { id: expenseId });
   } catch (err) {
     return next(err);

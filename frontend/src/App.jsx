@@ -16,6 +16,7 @@ import PageTransition from './components/PageTransition.jsx';
 import Fab from './components/Fab.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import NotificationBell from './components/NotificationBell.jsx';
+import NotificationPermissionBanner from './components/NotificationPermissionBanner.jsx';
 import { useAuth } from './context/AuthContext.jsx';
 
 // Wraps a page in route-change animation + (for app pages) the auth guard.
@@ -52,6 +53,8 @@ export default function App() {
   const { user } = useAuth();
   return (
     <>
+      {/* Push-permission prompt banner, only when signed in. */}
+      {user && <NotificationPermissionBanner />}
       {/* Sidebar + content offset only when signed in (no routing change). */}
       {user && <Sidebar />}
       {/* Header notification bell, only when signed in. */}

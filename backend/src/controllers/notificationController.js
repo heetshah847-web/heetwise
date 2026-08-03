@@ -1,6 +1,13 @@
 import { prisma } from '../lib/prisma.js';
 import { sendSuccess } from '../utils/response.js';
-import { computeBalances, simplifyDebts } from '../utils/balance.js';
+import { requireString } from '../utils/validation.js';
+import { ValidationError } from '../utils/errors.js';
+import {
+  computeBalances,
+  simplifyDebts,
+  withoutSettledSplits,
+} from '../utils/balance.js';
+import { scheduleDebtReminders } from '../services/notificationService.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -28,24 +35,26 @@ export async function getNotifications(req, res, next) {
     const notifications = [];
 
     for (const group of groups) {
-      const expenses = await prisma.expense.findMany({
+      const rawExpenses = await prisma.expense.findMany({
         where: { groupId: group.id },
         select: {
           amountCents: true,
           paidById: true,
           createdAt: true,
-          splits: { select: { userId: true, amountCents: true } },
+          splits: { select: { userId: true, amountCents: true, isSettled: true } },
         },
       });
-      if (expenses.length === 0) continue;
+      if (rawExpenses.length === 0) continue;
 
       // Only debts whose oldest expense is older than 7 days qualify.
-      const oldest = expenses.reduce(
+      const oldest = rawExpenses.reduce(
         (min, e) => (e.createdAt < min ? e.createdAt : min),
-        expenses[0].createdAt
+        rawExpenses[0].createdAt
       );
       if (oldest >= cutoff) continue;
 
+      // Exclude already-settled splits so paid-off debts stop notifying.
+      const expenses = withoutSettledSplits(rawExpenses);
       const balances = computeBalances(expenses);
       const plan = simplifyDebts(balances);
       const myDebts = plan.filter((t) => t.from === userId || t.to === userId);
@@ -92,6 +101,49 @@ export async function getNotifications(req, res, next) {
       notifications,
       count: notifications.length,
     });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /notifications/subscribe — save (or refresh) the current user's browser
+// Web Push subscription. Body is the PushSubscription JSON the browser produced:
+//   { endpoint, keys: { p256dh, auth } }
+// Keyed by the globally-unique endpoint so re-subscribing the same browser (or a
+// subscription that moved to another account) upserts cleanly.
+export async function subscribePush(req, res, next) {
+  try {
+    const endpoint = requireString(req.body?.endpoint, 'endpoint', {
+      max: 2000,
+    });
+    const keys = req.body?.keys ?? {};
+    const p256dh = requireString(keys.p256dh, 'keys.p256dh', { max: 500 });
+    const auth = requireString(keys.auth, 'keys.auth', { max: 500 });
+
+    if (!/^https?:\/\//.test(endpoint)) {
+      throw new ValidationError('endpoint must be a valid push service URL');
+    }
+
+    const subscription = await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      update: { userId: req.user.id, p256dh, auth },
+      create: { userId: req.user.id, endpoint, p256dh, auth },
+    });
+
+    return sendSuccess(res, 201, { subscribed: true, id: subscription.id });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// GET /notifications/send-reminders — trigger the daily unsettled-debt reminder
+// sweep. Called by the Vercel cron (see vercel.json). Returns how many push
+// notifications were sent. Intentionally unauthenticated so the platform cron
+// can reach it; it only sends reminders and exposes no user data.
+export async function sendReminders(req, res, next) {
+  try {
+    const sent = await scheduleDebtReminders();
+    return sendSuccess(res, 200, { sent });
   } catch (err) {
     return next(err);
   }

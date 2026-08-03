@@ -3,7 +3,53 @@
 Security hardening (Phase 6) is done. Phase 8 added invitations, settlements,
 notifications, tick-based splits, multi-origin CORS, and Pusher real-time.
 Phase 9 added the cross-group **Summary** page + `GET /balances/summary`.
-Deploy steps below; **the new env vars are the important part.**
+Phase 10 made **Settle Up** work end-to-end (settlement tracking, history, live
+cascade) and added **browser push notifications**. Deploy steps below; **the new
+env vars + migrations + cron are the important part.**
+
+## Phase 10 deploy checklist (Settle Up + push) — DO THESE
+
+### Database migrations (run on every environment)
+Two new migrations were added and already applied to Neon:
+`20260803120000_add_settlement_tracking` (adds `splits.is_settled`) and
+`20260803120100_add_push_subscriptions` (adds the `push_subscriptions` table).
+On any other environment run, from `backend/` with `DATABASE_URL` set:
+`npx prisma migrate deploy` (idempotent). **`prisma generate` must run** (it does
+via `postinstall`) so the client knows `isSettled` / `pushSubscription`.
+
+### Backend env vars (Vercel → backend project)
+Add Web Push (VAPID) — generate once with `npx web-push generate-vapid-keys`:
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`  ← **secret; backend only, never in the frontend project**
+- `VAPID_EMAIL` (e.g. `mailto:admin@heetwise.app` or a bare email)
+
+If these are omitted the API still runs — push simply becomes a no-op. New
+dependency **`web-push`** is in `backend/package.json` (installed).
+
+### Frontend env vars (Vercel → frontend project)
+- `VITE_VAPID_PUBLIC_KEY` = the **same** value as backend `VAPID_PUBLIC_KEY`
+  (client-safe). If unset, the app skips push subscription; everything else works.
+
+### Cron (daily debt reminders)
+`vercel.json` at the **repo root** (and `backend/vercel.json`) declares a cron:
+`{ "path": "/notifications/send-reminders", "schedule": "30 3 * * *" }` =
+**09:00 IST** daily. The cron must run on the **backend** deployment (that's where
+the route lives); if the backend Vercel project is rooted at `backend/`, the
+`backend/vercel.json` cron is the effective one. `/notifications/send-reminders`
+is intentionally unauthenticated (returns `{ sent }`) so the platform cron can
+reach it.
+
+### Service worker
+`frontend/public/sw.js` ships in the build output and is registered at runtime by
+`lib/push.js` when the user enables notifications. No dashboard config needed.
+
+### Notes / follow-ups
+- Settlements are **full-settle per group**; a partial-settlement UI could be
+  reintroduced later (the backend would need to mark splits proportionally).
+- The unauthenticated `send-reminders` endpoint could be hardened with a
+  `CRON_SECRET` header check if the deployment exposes it publicly.
+- Group **stats** remain expense-derived (not settlement-adjusted); revisit if a
+  "net of settlements" stat is ever desired.
 
 ## Phase 9 notes (no new env vars / migrations)
 - `GET /balances/summary` and `pages/Summary.jsx` are additive — **no schema

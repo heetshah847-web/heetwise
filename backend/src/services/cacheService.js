@@ -24,3 +24,10 @@ export function invalidateGroupStats(groupId) {
   if (keys.length) cache.del(keys);
   return keys.length;
 }
+
+// Drop the cached cross-group balance summary for each given user. Called
+// whenever an expense or settlement changes what a user is owed / owes so the
+// Summary page never shows stale balances.
+export function invalidateSummaries(userIds) {
+  for (const id of userIds) cache.del(`summary:user:${id}`);
+}

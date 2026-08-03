@@ -8,6 +8,23 @@
 // has already resolved every split to a concrete amount before it was stored.
 // Adding a new split type therefore requires NO changes to this file.
 
+// Drop settled splits before balance math. A split carrying `isSettled: true`
+// represents a debt that has already been paid off via a Settlement, so it must
+// not count toward anyone's outstanding balance. Removing a split also removes
+// the payer's credit for that share (each expense's effective amount is the sum
+// of its remaining, non-settled splits), which keeps the zero-sum invariant AND
+// makes the pairwise balance between two fully-settled users drop to zero.
+//
+// This is a pure transform that leaves the input untouched; computeBalances and
+// simplifyDebts below need no knowledge of settlement.
+export function withoutSettledSplits(expenses) {
+  return expenses.map((expense) => {
+    const splits = expense.splits.filter((s) => !s.isSettled);
+    const amountCents = splits.reduce((sum, s) => sum + s.amountCents, 0);
+    return { ...expense, amountCents, splits };
+  });
+}
+
 // Net balance per user in cents.
 //   positive = the group owes this user (they are owed money)
 //   negative = this user owes the group

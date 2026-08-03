@@ -7,6 +7,8 @@ import {
   ConflictError,
 } from '../utils/errors.js';
 import { triggerEvent, userChannel } from '../services/pusherService.js';
+import { sendPushNotification } from '../services/notificationService.js';
+import { env } from '../config/env.js';
 
 // Invitations expire 7 days after they are created.
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -87,6 +89,12 @@ export async function createInvitation(req, res, next) {
     if (invitedUser) {
       await triggerEvent(userChannel(invitedUser.id), 'invitation-received', {
         invitation: publicInvitation(created),
+      });
+      const inviterName = req.user.name || req.user.email || 'Someone';
+      await sendPushNotification(invitedUser.id, {
+        title: `Group invitation`,
+        body: `${inviterName} invited you to join ${group.name} — tap to accept`,
+        url: `${env.frontendUrl}/requests`,
       });
     }
 

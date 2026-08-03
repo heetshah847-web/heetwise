@@ -58,6 +58,7 @@ export const api = {
       method: 'POST',
       body: { fromUserId, toUserId, amountCents, currency },
     }),
+  listSettlements: (groupId) => request(`/groups/${groupId}/settlements`),
 
   // Invitations (invitee-facing)
   getPendingInvitations: () => request('/invitations/pending'),
@@ -68,6 +69,9 @@ export const api = {
 
   // Notifications (unsettled debts older than 7 days)
   getNotifications: () => request('/notifications'),
+  // Save this browser's Web Push subscription for the current user.
+  subscribePush: (subscription) =>
+    request('/notifications/subscribe', { method: 'POST', body: subscription }),
 
   // Cross-group balance summary (net per person across all shared groups)
   getBalancesSummary: () => request('/balances/summary'),

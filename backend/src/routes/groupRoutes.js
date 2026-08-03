@@ -16,7 +16,10 @@ import {
   deleteExpense,
 } from '../controllers/expenseController.js';
 import { createInvitation } from '../controllers/invitationController.js';
-import { createSettlement } from '../controllers/settlementController.js';
+import {
+  createSettlement,
+  listSettlements,
+} from '../controllers/settlementController.js';
 import { validateSplit } from '../middleware/validateSplit.js';
 import { requireGroupMember } from '../middleware/requireGroupMember.js';
 import { requireExpenseOwnership } from '../middleware/requireExpenseOwnership.js';
@@ -49,6 +52,7 @@ router.post('/:groupId/invitations', requireGroupMember, createInvitation);
 
 // Balances + settlements (read → 404 via controller)
 router.get('/:groupId/balances', getBalances);
+router.get('/:groupId/settlements', listSettlements);
 router.post('/:groupId/settlements', requireGroupMember, createSettlement);
 
 // Expenses (nested under a group)

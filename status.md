@@ -1,4 +1,118 @@
-Phase: 9 (cross-group balance Summary page + endpoint)
+Phase: 10 (Settle Up end-to-end, settlement tracking, settlement history, browser push)
+
+---
+
+## Phase 10 — Settle Up (end-to-end) + settlement tracking + browser push
+
+Made "Settle Up" actually work: recording a settlement now marks the underlying
+debt as paid, drops the balance to zero everywhere, cascades live to every
+surface, and (optionally) fires browser push notifications. Two migrations were
+added and applied to the Neon DB.
+
+### Schema + migrations (applied via `prisma migrate deploy`)
+- **`Split.isSettled Boolean @default(false)`** (`is_settled` column) — migration
+  **`20260803120000_add_settlement_tracking`**. A split flagged settled no longer
+  counts toward anyone's balance.
+- **`PushSubscription`** model → **`push_subscriptions`** table (id, userId FK→users
+  ON DELETE CASCADE, endpoint UNIQUE, p256dh, auth, createdAt) — migration
+  **`20260803120100_add_push_subscriptions`**.
+
+### Fix 1 — Settle Up visibility
+- **Summary** (`pages/Summary.jsx`): Section 2 (**Owes you**) keeps the green
+  **Settle Up** button; Section 3 (**You owe**) now shows an informational
+  **Pay Back** label with no action.
+- **GroupDetail** balances: **Settle Up** shows next to a suggested settlement
+  **only when that person owes the current user** (`s.to === me`); the reverse
+  leg shows a passive **Pay Back** label.
+
+### Fix 2 — Settle Up works end-to-end (`POST /groups/:groupId/settlements`)
+`controllers/settlementController.js` rewritten to run **one interactive Prisma
+transaction** that: (1) verifies the caller is a group member; (2) verifies both
+parties are members; (3) verifies there is a real outstanding debt where
+`fromUser` owes `toUser` (aggregate of unsettled splits, both directions —
+rejects with 400 if none); (4) creates the `Settlement`; (5) marks **all** splits
+representing debt between the two users in this group (both directions) as
+`isSettled = true` (a full settle → pairwise balance = 0). Returns
+`{ settlement, balance:{ fromUserId, toUserId, netAmountCents:0 } }`.
+- Balance surfaces are now **settlement-aware** via a new pure helper
+  `utils/balance.js → withoutSettledSplits(expenses)` (drops settled splits AND
+  the payer's credit for them, preserving the zero-sum invariant). Applied in
+  `groupController.getBalances`, `balanceController.getBalancesSummary`, and
+  `notificationController.getNotifications`. `computeBalances`/`simplifyDebts`
+  were **not** modified.
+
+### Fix 3 — Real-time cascade
+- Backend emits, after commit: `group-<id>` **`settlement-created`**
+  `{ fromUserId, toUserId, amountCents, settlement }`, plus **`balance-updated`**
+  on `user-<fromUserId>` and `user-<toUserId>`.
+- Frontend: **GroupDetail** listens for `settlement-created` → refetches balances,
+  expense list, and settlement history. **Summary** listens on its user channel
+  for `balance-updated` → silent refetch.
+
+### Fix 4 — Downstream data updates
+- Group balances show zero between settled users; the **Activity** feed shows a
+  green-checkmark settlement entry at the top; personal Summary drops/zeros the
+  settled person; the sidebar owe-badge recomputes (route change + live).
+- **Cache invalidation**: settlement invalidates group stats
+  (`invalidateGroupStats`) and both parties' summary cache. The summary endpoint
+  is now **node-cache-backed** (`summary:user:<id>`); a new
+  `cacheService.invalidateSummaries(userIds)` is also called on every expense
+  create/update/delete so summaries never go stale.
+
+### Fix 5 — Settlement confirmation modal (`components/SettleUpModal.jsx`)
+Rewritten to a single reusable confirmation modal (used by Summary, GroupDetail,
+NotificationBell): other person's avatar + name, exact amount (with USD
+equivalent), per-group breakdown, the message *"This will mark all debts between
+you and NAME as settled"*, Cancel + a **bright green Confirm Settlement** button
+that shows a spinner and is disabled while the API call is in flight. Success →
+green toast *"Settled up with NAME successfully"* + close; error → red toast with
+the exact message, modal stays open. Posts one settlement per contributing group.
+
+### Fix 6 — Settlement history
+- **`GET /groups/:groupId/settlements`** (`listSettlements`, member-only → 404):
+  all past settlements, newest first, each with from/to user, amount, currency,
+  `settledAt`.
+- **GroupDetail** gained a **Settlement History** tab (timeline cards: green
+  check, "X paid Y", amount, date) beside the new **Activity** tab.
+
+### Fix 7 — Browser push notifications
+- `npm install web-push`; VAPID keypair generated and stored as
+  `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL` (backend `.env`,
+  `.env.example` placeholders) and `VITE_VAPID_PUBLIC_KEY` (frontend).
+- **`services/notificationService.js`** (optional, no-op without VAPID):
+  `sendPushNotification(userId, {title, body, icon, url})` (fans out to the
+  user's `push_subscriptions`, prunes dead 404/410 endpoints) and
+  `scheduleDebtReminders()` (all unsettled debts >7 days, grouped by debtor,
+  "You owe NAME $AMOUNT — tap to settle up" → summary link).
+- Endpoints: **`POST /notifications/subscribe`** (auth, upsert by endpoint) and
+  **`GET /notifications/send-reminders`** (unauthenticated cron target → returns
+  `{ sent }`).
+- Triggers: new expense → all members except payer; invitation → invitee;
+  settlement completed → the person who was owed; daily reminders → debtors.
+- Frontend: `lib/push.js` (service worker registration + subscribe, VAPID key
+  decode), `public/sw.js` (push + notificationclick), and
+  `components/NotificationPermissionBanner.jsx` — a dismissable top banner
+  ("Enable notifications…"/Enable/Dismiss, `localStorage` dismiss flag; silent
+  re-subscribe when already granted), wired into `App.jsx`.
+- **Cron**: root **`vercel.json`** (and `backend/vercel.json`) with a daily
+  `30 3 * * *` UTC cron (= **9:00 AM IST**) hitting `/notifications/send-reminders`.
+
+### Verified
+- Migrations applied to Neon (`is_settled` present, `push_subscriptions` created);
+  Prisma relation-filter aggregate/updateMany shape validated against the live DB.
+- Backend `app.js` imports/boots cleanly; **20/20 unit tests pass**.
+- Frontend `npm run build` succeeds (3125 modules).
+
+### Design decisions / notes
+- Settlements are **full-settle** per group (mark all pairwise debts settled),
+  matching the modal copy; the old partial/custom-amount UI on Summary was
+  removed in favor of the unified confirmation modal.
+- **Group stats** are expense-derived (who paid what) and are **not** rewritten to
+  subtract settled amounts — settling a debt doesn't change history — but the
+  stats cache is still invalidated so the page recomputes. Balance/summary/
+  notification surfaces are the ones made settlement-aware.
+- Both `pusherService` and `notificationService` remain **optional**: absent
+  credentials make broadcasts/pushes safe no-ops.
 
 ---
 

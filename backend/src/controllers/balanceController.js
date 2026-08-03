@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { sendSuccess } from '../utils/response.js';
+import { get as cacheGet, set as cacheSet } from '../services/cacheService.js';
 
 // GET /balances/summary — a complete cross-group financial summary for the
 // current user.
@@ -21,6 +22,11 @@ export async function getBalancesSummary(req, res, next) {
   try {
     const userId = req.user.id;
 
+    // Cached per user; invalidated on settlement (see settlementController).
+    const cacheKey = `summary:user:${userId}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return sendSuccess(res, 200, cached);
+
     const groups = await prisma.group.findMany({
       where: { members: { some: { userId } } },
       select: {
@@ -34,7 +40,9 @@ export async function getBalancesSummary(req, res, next) {
         expenses: {
           select: {
             paidById: true,
-            splits: { select: { userId: true, amountCents: true } },
+            splits: {
+              select: { userId: true, amountCents: true, isSettled: true },
+            },
           },
         },
       },
@@ -72,15 +80,17 @@ export async function getBalancesSummary(req, res, next) {
 
       for (const expense of group.expenses) {
         if (expense.paidById === userId) {
-          // We paid: every other participant's share is owed to us.
+          // We paid: every other participant's UNSETTLED share is owed to us.
           for (const split of expense.splits) {
+            if (split.isSettled) continue;
             if (split.userId !== userId) {
               addNet(split.userId, group.id, split.amountCents);
             }
           }
         } else {
-          // Someone else paid: our own share in that expense is owed to them.
+          // Someone else paid: our own UNSETTLED share is owed to them.
           for (const split of expense.splits) {
+            if (split.isSettled) continue;
             if (split.userId === userId) {
               addNet(expense.paidById, group.id, -split.amountCents);
             }
@@ -126,13 +136,15 @@ export async function getBalancesSummary(req, res, next) {
       (a, b) => Math.abs(b.netAmountCents) - Math.abs(a.netAmountCents)
     );
 
-    return sendSuccess(res, 200, {
+    const result = {
       balances,
       totalOwedToMe,
       totalIOwe,
       currency: 'USD',
       generatedAt: new Date().toISOString(),
-    });
+    };
+    cacheSet(cacheKey, result);
+    return sendSuccess(res, 200, result);
   } catch (err) {
     return next(err);
   }

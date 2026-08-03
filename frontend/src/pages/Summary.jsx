@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import * as Dialog from '@radix-ui/react-dialog';
 import {
   Scale,
   RefreshCw,
@@ -11,197 +10,14 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
-import { api, formatCents, toCents } from '../api/client.js';
+import { api, formatCents } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import Button from '../components/Button.jsx';
+import { usePusher } from '../hooks/usePusher.js';
+import SettleUpModal from '../components/SettleUpModal.jsx';
 
 const dollars = (cents) => (cents / 100).toFixed(2);
 const initialOf = (person) =>
   (person.otherUserName || person.otherUserEmail || '?').charAt(0).toUpperCase();
-
-// Greedily split a target amount (cents) across the person's contributing
-// groups, largest contribution first, so the per-group settlements always sum
-// exactly to the confirmed amount.
-function allocate(groupBreakdown, targetCents) {
-  const legs = groupBreakdown
-    .map((g) => ({ ...g, magnitude: Math.abs(g.netAmountCents) }))
-    .filter((g) => g.magnitude > 0)
-    .sort((a, b) => b.magnitude - a.magnitude);
-
-  let remaining = targetCents;
-  const out = [];
-  for (const leg of legs) {
-    if (remaining <= 0) break;
-    const amount = Math.min(leg.magnitude, remaining);
-    out.push({ groupId: leg.groupId, amountCents: amount });
-    remaining -= amount;
-  }
-  return out;
-}
-
-// -- Settle Up modal ---------------------------------------------------------
-// `intent` (null when closed): the person object + direction ('owes_you' |
-// 'you_owe') + the current user id.
-function SettleModal({ intent, onClose, onSettled }) {
-  const [mode, setMode] = useState('full'); // 'full' | 'custom'
-  const [customAmount, setCustomAmount] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const open = Boolean(intent);
-
-  useEffect(() => {
-    if (open) {
-      setMode('full');
-      setCustomAmount('');
-    }
-  }, [open]);
-
-  if (!intent) return null;
-
-  const { person, direction, userId } = intent;
-  const totalCents = Math.abs(person.netAmountCents);
-  const youOwe = direction === 'you_owe';
-
-  const amountCents =
-    mode === 'full' ? totalCents : Math.max(0, toCents(customAmount || 0));
-  const valid = amountCents > 0 && amountCents <= totalCents;
-
-  async function confirm() {
-    if (!valid) return;
-    setSubmitting(true);
-    try {
-      const legs = allocate(person.groupBreakdown, amountCents);
-      if (legs.length === 0) throw new Error('Nothing to settle');
-      // One settlement per contributing group. Direction decides payer/payee:
-      //   they owe me  -> they paid me   (from = other, to = me)
-      //   I owe them    -> I paid them    (from = me,    to = other)
-      for (const leg of legs) {
-        await api.createSettlement(leg.groupId, {
-          fromUserId: youOwe ? userId : person.otherUserId,
-          toUserId: youOwe ? person.otherUserId : userId,
-          amountCents: leg.amountCents,
-          currency: 'USD',
-        });
-      }
-      toast.success('Settlement recorded');
-      onSettled?.();
-      onClose?.();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={(o) => !o && onClose?.()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] w-[min(92vw,440px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-surface p-6 text-fg shadow-2xl">
-          <Dialog.Title className="text-lg font-semibold">Settle up</Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm text-muted">
-            {youOwe ? (
-              <>
-                Record that you paid{' '}
-                <strong className="text-fg">{person.otherUserName}</strong>.
-              </>
-            ) : (
-              <>
-                Record that{' '}
-                <strong className="text-fg">{person.otherUserName}</strong> paid
-                you.
-              </>
-            )}{' '}
-            Settling spreads across{' '}
-            {person.groupBreakdown.length === 1
-              ? '1 group'
-              : `${person.groupBreakdown.length} groups`}
-            .
-          </Dialog.Description>
-
-          <div className="mt-5 space-y-3">
-            <label
-              className={
-                'flex cursor-pointer items-center justify-between rounded-xl border p-4 transition-colors ' +
-                (mode === 'full'
-                  ? 'border-brand-500 bg-brand-500/10'
-                  : 'border-border hover:bg-white/5')
-              }
-            >
-              <span className="flex items-center gap-3">
-                <input
-                  type="radio"
-                  name="settle-mode"
-                  checked={mode === 'full'}
-                  onChange={() => setMode('full')}
-                  className="h-4 w-4"
-                />
-                <span className="text-sm font-medium">Full amount</span>
-              </span>
-              <span
-                className={
-                  'text-lg font-bold ' + (youOwe ? 'text-danger' : 'text-success')
-                }
-              >
-                {formatCents(totalCents)}
-              </span>
-            </label>
-
-            <label
-              className={
-                'flex cursor-pointer flex-col gap-3 rounded-xl border p-4 transition-colors ' +
-                (mode === 'custom'
-                  ? 'border-brand-500 bg-brand-500/10'
-                  : 'border-border hover:bg-white/5')
-              }
-            >
-              <span className="flex items-center gap-3">
-                <input
-                  type="radio"
-                  name="settle-mode"
-                  checked={mode === 'custom'}
-                  onChange={() => setMode('custom')}
-                  className="h-4 w-4"
-                />
-                <span className="text-sm font-medium">Custom amount</span>
-              </span>
-              {mode === 'custom' && (
-                <div className="flex items-center gap-2 pl-7">
-                  <span className="text-muted">$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    max={dollars(totalCents)}
-                    autoFocus
-                    value={customAmount}
-                    onChange={(e) => setCustomAmount(e.target.value)}
-                    placeholder={dollars(totalCents)}
-                    className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm"
-                  />
-                </div>
-              )}
-            </label>
-          </div>
-
-          {mode === 'custom' && amountCents > totalCents && (
-            <p className="mt-2 text-xs text-danger">
-              Amount can&apos;t exceed {formatCents(totalCents)}.
-            </p>
-          )}
-
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={confirm} loading={submitting} disabled={!valid}>
-              Confirm {formatCents(amountCents)}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
 
 // -- Person card -------------------------------------------------------------
 function PersonCard({ person, direction, onSettle }) {
@@ -258,17 +74,20 @@ function PersonCard({ person, direction, onSettle }) {
           {person.groupBreakdown.length}{' '}
           {person.groupBreakdown.length === 1 ? 'group' : 'groups'}
         </button>
-        <button
-          onClick={() => onSettle(person, direction)}
-          className={
-            'ml-auto rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ' +
-            (youOwe
-              ? 'bg-danger hover:brightness-110'
-              : 'bg-success hover:brightness-110')
-          }
-        >
-          Settle Up
-        </button>
+        {youOwe ? (
+          // You owe them — informational only, no settle action here.
+          <span className="ml-auto rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted">
+            Pay Back
+          </span>
+        ) : (
+          // They owe you — you can record the settlement.
+          <button
+            onClick={() => onSettle(person, direction)}
+            className="ml-auto rounded-lg bg-success px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110"
+          >
+            Settle Up
+          </button>
+        )}
       </div>
 
       <AnimatePresence initial={false}>
@@ -352,6 +171,11 @@ export default function Summary() {
     load();
   }, [load]);
 
+  // Real-time: when a settlement touches this user, refetch the summary.
+  usePusher(user ? `user-${user.id}` : null, {
+    'balance-updated': () => load({ silent: true }),
+  });
+
   const { owedToMe, iOwe, netCents } = useMemo(() => {
     const balances = summary?.balances || [];
     return {
@@ -366,7 +190,28 @@ export default function Summary() {
   }, [summary]);
 
   function openSettle(person, direction) {
-    setIntent({ person, direction, userId: user.id });
+    const youOwe = direction === 'you_owe';
+    // Settle every group whose debt runs in this direction; the total is the
+    // sum of those legs (the backend fully settles each group's pairwise debt).
+    const groups = (person.groupBreakdown || [])
+      .filter((g) =>
+        youOwe ? g.netAmountCents < 0 : g.netAmountCents > 0
+      )
+      .map((g) => ({
+        groupId: g.groupId,
+        groupName: g.groupName,
+        amountCents: Math.abs(g.netAmountCents),
+      }));
+    const amountCents = groups.reduce((s, g) => s + g.amountCents, 0);
+    setIntent({
+      currentUserId: user.id,
+      otherUserId: person.otherUserId,
+      otherName: person.otherUserName,
+      otherEmail: person.otherUserEmail,
+      direction,
+      amountCents,
+      groups,
+    });
   }
 
   const allSettled =
@@ -510,7 +355,7 @@ export default function Summary() {
         </p>
       )}
 
-      <SettleModal
+      <SettleUpModal
         intent={intent}
         onClose={() => setIntent(null)}
         onSettled={() => load({ silent: true })}
