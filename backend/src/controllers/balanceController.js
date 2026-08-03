@@ -38,6 +38,7 @@ export async function getBalancesSummary(req, res, next) {
           },
         },
         expenses: {
+          where: { deletedAt: null },
           select: {
             paidById: true,
             splits: {

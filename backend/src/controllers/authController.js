@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 import {
   signToken,
+  verifyToken,
   AUTH_COOKIE,
   authCookieOptions,
 } from '../utils/jwt.js';
@@ -54,7 +55,7 @@ export async function register(req, res, next) {
       },
     });
 
-    const token = signToken(user.id);
+    const token = signToken(user.id, user.tokenVersion);
     res.cookie(AUTH_COOKIE, token, authCookieOptions());
 
     return sendSuccess(res, 201, { user: publicUser(user) });
@@ -88,7 +89,7 @@ export async function login(req, res, next) {
       return sendError(res, 401, 'Invalid email or password');
     }
 
-    const token = signToken(user.id);
+    const token = signToken(user.id, user.tokenVersion);
     res.cookie(AUTH_COOKIE, token, authCookieOptions());
 
     return sendSuccess(res, 200, { user: publicUser(user) });
@@ -97,9 +98,23 @@ export async function login(req, res, next) {
   }
 }
 
-// POST /auth/logout — clear the auth cookie.
+// POST /auth/logout — clear the auth cookie AND bump the user's token version so
+// the just-cleared JWT (and any copy of it) can never be reused. Best-effort:
+// an already-invalid/absent token still clears the cookie cleanly.
 export async function logout(req, res, next) {
   try {
+    const token = req.cookies?.[AUTH_COOKIE];
+    if (token) {
+      try {
+        const payload = verifyToken(token);
+        await prisma.user.update({
+          where: { id: payload.sub },
+          data: { tokenVersion: { increment: 1 } },
+        });
+      } catch {
+        // Invalid/expired token — nothing to revoke; just clear the cookie.
+      }
+    }
     res.clearCookie(AUTH_COOKIE, { ...authCookieOptions(), maxAge: undefined });
     return sendSuccess(res, 200, { message: 'Logged out' });
   } catch (err) {

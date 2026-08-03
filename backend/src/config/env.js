@@ -48,4 +48,9 @@ export const env = {
   authRateLimitMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 10,
   authRateLimitWindowMs:
     Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  // Optional shared secret guarding the unauthenticated cron endpoint. When set,
+  // /notifications/send-reminders requires "Authorization: Bearer <secret>"
+  // (Vercel Cron sends this automatically when CRON_SECRET is configured). Left
+  // unset, the endpoint stays open so existing deployments keep working.
+  cronSecret: process.env.CRON_SECRET || null,
 };

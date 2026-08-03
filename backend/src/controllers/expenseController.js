@@ -123,7 +123,30 @@ export async function createExpense(req, res, next) {
       paidBy,
       splitType,
       members,
+      idempotencyKey,
     } = req.body ?? {};
+
+    // Idempotency: if the client sends a key and an expense with that key already
+    // exists, return it instead of creating a duplicate (safe to retry a request
+    // whose response was lost). The unique index also guards against a race.
+    const idemKey =
+      typeof idempotencyKey === 'string' && idempotencyKey.trim()
+        ? idempotencyKey.trim().slice(0, 100)
+        : null;
+    if (idemKey) {
+      const existing = await prisma.expense.findUnique({
+        where: { idempotencyKey: idemKey },
+        include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
+      });
+      if (existing) {
+        return sendSuccess(res, 201, { expense: publicExpense(existing) });
+      }
+    }
 
     const desc = requireString(description, 'description', { max: 200 });
     requireEnum(splitType, 'splitType', SPLIT_TYPES);
@@ -171,8 +194,12 @@ export async function createExpense(req, res, next) {
     const shares = calculateSplits(usdAmount, splitType, membersForSplit);
     const metaByUser = new Map(members.map((m) => [m.userId, m]));
 
-    // Single transaction: expense + every split, all-or-nothing.
-    const expense = await prisma.$transaction(async (tx) => {
+    // Single transaction: expense + every split, all-or-nothing. A concurrent
+    // retry with the same idempotency key trips the unique index (P2002) — we
+    // catch that below and return the already-created expense.
+    let expense;
+    try {
+      expense = await prisma.$transaction(async (tx) => {
       const created = await tx.expense.create({
         data: {
           groupId,
@@ -184,6 +211,7 @@ export async function createExpense(req, res, next) {
           splitType,
           paidById,
           createdById: req.user.id,
+          idempotencyKey: idemKey,
         },
       });
 
@@ -203,9 +231,33 @@ export async function createExpense(req, res, next) {
 
       return tx.expense.findUnique({
         where: { id: created.id },
-        include: { paidBy: true, splits: { include: { user: true } } },
+        include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
       });
-    });
+      });
+    } catch (err) {
+      // Lost the idempotency-key race: a concurrent identical request already
+      // created the expense. Return that one rather than a duplicate/error.
+      if (err?.code === 'P2002' && idemKey) {
+        const existing = await prisma.expense.findUnique({
+          where: { idempotencyKey: idemKey },
+          include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
+        });
+        if (existing) {
+          return sendSuccess(res, 201, { expense: publicExpense(existing) });
+        }
+      }
+      throw err;
+    }
 
     // A new expense changes every group stat and every member's summary — drop
     // the cached entries so both recompute on next read.
@@ -268,8 +320,13 @@ export async function listExpenses(req, res, next) {
     // Fetch one extra row to know whether there's a next page. Order by a
     // unique tiebreaker (id) so the cursor is stable.
     const rows = await prisma.expense.findMany({
-      where: { groupId },
-      include: { paidBy: true, splits: { include: { user: true } } },
+      where: { groupId, deletedAt: null },
+      include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -289,11 +346,17 @@ export async function listExpenses(req, res, next) {
   }
 }
 
-// Load an expense and confirm it belongs to the group (404 otherwise).
+// Load a live expense and confirm it belongs to the group (404 otherwise). A
+// soft-deleted expense is treated as not found.
 async function loadGroupExpense(groupId, expenseId) {
-  const expense = await prisma.expense.findUnique({
-    where: { id: expenseId },
-    include: { paidBy: true, splits: { include: { user: true } } },
+  const expense = await prisma.expense.findFirst({
+    where: { id: expenseId, deletedAt: null },
+    include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
   });
   if (!expense || expense.groupId !== groupId) {
     throw new NotFoundError('Expense not found');
@@ -333,7 +396,12 @@ export async function updateExpense(req, res, next) {
           paidById: input.paidById,
           splits: { create: input.splits },
         },
-        include: { paidBy: true, splits: { include: { user: true } } },
+        include: {
+        paidBy: { select: { id: true, email: true, name: true } },
+        splits: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
       });
     });
     // Editing splits changes balances + stats — drop the cached entries.
@@ -350,9 +418,14 @@ export async function deleteExpense(req, res, next) {
   try {
     const { groupId, expenseId } = req.params;
     await assertMembership(groupId, req.user.id);
-    await loadGroupExpense(groupId, expenseId); // 404 if not in group
+    await loadGroupExpense(groupId, expenseId); // 404 if not in group / deleted
     const memberIds = await getGroupMemberIds(groupId);
-    await prisma.expense.delete({ where: { id: expenseId } });
+    // Soft delete: keep the row (audit trail) but stamp deletedAt so it drops
+    // out of every balance/stat read. Splits are left intact under the row.
+    await prisma.expense.update({
+      where: { id: expenseId },
+      data: { deletedAt: new Date() },
+    });
     // Removing an expense changes balances + stats — drop the cached entries.
     invalidateGroupStats(groupId);
     invalidateSummaries([...memberIds]);

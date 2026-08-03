@@ -32,7 +32,7 @@ export default function NotificationBell() {
   }, [user, load]);
 
   // Real-time: a received invitation increments the badge count.
-  usePusher(user ? `user-${user.id}` : null, {
+  usePusher(user ? `private-user-${user.id}` : null, {
     'invitation-received': () => {
       setLiveBump((b) => b + 1);
       toast('📨 New group invitation — check Requests');

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -48,6 +48,9 @@ export default function GroupDetail() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [settleIntent, setSettleIntent] = useState(null);
+  // Stable idempotency key for the in-flight expense submit: reused across
+  // retries of the same expense, regenerated only after a successful create.
+  const expenseKeyRef = useRef(null);
 
   // Add-member form
   const [memberEmail, setMemberEmail] = useState('');
@@ -132,7 +135,7 @@ export default function GroupDetail() {
 
   // Real-time: prepend expenses added by anyone; on a settlement, refetch the
   // balances, expense list and settlement history so the cascade is instant.
-  usePusher(`group-${groupId}`, {
+  usePusher(`private-group-${groupId}`, {
     'expense-added': (payload) => {
       const ex = payload?.expense;
       if (!ex) return;
@@ -241,6 +244,10 @@ export default function GroupDetail() {
     if (reason) return;
     setError('');
     setSubmitting(true);
+    if (!expenseKeyRef.current) {
+      expenseKeyRef.current =
+        globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random());
+    }
     try {
       await api.createExpense(groupId, {
         description,
@@ -249,7 +256,9 @@ export default function GroupDetail() {
         paidBy: paidById,
         splitType,
         members: buildMembersPayload(),
+        idempotencyKey: expenseKeyRef.current,
       });
+      expenseKeyRef.current = null; // success → next expense gets a fresh key
       setDescription('');
       setAmount('');
       setExactAmounts({});

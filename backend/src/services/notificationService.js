@@ -67,7 +67,7 @@ export async function sendPushNotification(userId, notification) {
             .delete({ where: { id: sub.id } })
             .catch(() => {});
         } else {
-          console.error(`[push] failed to notify ${userId}: ${err.message}`);
+          console.error(`[push] notification delivery failed: ${err.message}`);
         }
       }
     })
@@ -84,22 +84,57 @@ export async function scheduleDebtReminders() {
   const cutoff = new Date(now - SEVEN_DAYS_MS);
 
   const groups = await prisma.group.findMany({
-    include: { members: { include: { user: true } } },
+    include: {
+      members: {
+        include: { user: { select: { id: true, email: true, name: true } } },
+      },
+    },
   });
+  const groupIds = groups.map((g) => g.id);
+
+  // Two queries total (was N+1: two per group): every group's live expenses and
+  // every recent settlement, bucketed by groupId in memory.
+  const [allExpenses, allSettlements] = await Promise.all([
+    groupIds.length
+      ? prisma.expense.findMany({
+          where: { groupId: { in: groupIds }, deletedAt: null },
+          select: {
+            groupId: true,
+            paidById: true,
+            amountCents: true,
+            createdAt: true,
+            splits: {
+              select: { userId: true, amountCents: true, isSettled: true },
+            },
+          },
+        })
+      : [],
+    groupIds.length
+      ? prisma.settlement.findMany({
+          where: { groupId: { in: groupIds }, settledAt: { gte: cutoff } },
+          select: { groupId: true, fromUserId: true, toUserId: true },
+        })
+      : [],
+  ]);
+
+  const expensesByGroup = new Map();
+  for (const e of allExpenses) {
+    const list = expensesByGroup.get(e.groupId) || [];
+    list.push(e);
+    expensesByGroup.set(e.groupId, list);
+  }
+  const settledPairsByGroup = new Map();
+  for (const s of allSettlements) {
+    const set = settledPairsByGroup.get(s.groupId) || new Set();
+    set.add(pairKey(s.fromUserId, s.toUserId));
+    settledPairsByGroup.set(s.groupId, set);
+  }
 
   // debtorId -> [{ creditorName, amountCents, groupName }]
   const remindersByDebtor = new Map();
 
   for (const group of groups) {
-    const rawExpenses = await prisma.expense.findMany({
-      where: { groupId: group.id },
-      select: {
-        paidById: true,
-        amountCents: true,
-        createdAt: true,
-        splits: { select: { userId: true, amountCents: true, isSettled: true } },
-      },
-    });
+    const rawExpenses = expensesByGroup.get(group.id) || [];
     if (rawExpenses.length === 0) continue;
 
     // Only debts whose oldest contributing expense is older than 7 days qualify.
@@ -115,13 +150,7 @@ export async function scheduleDebtReminders() {
     if (plan.length === 0) continue;
 
     // A settlement between the pair in the last 7 days silences the reminder.
-    const recentSettlements = await prisma.settlement.findMany({
-      where: { groupId: group.id, settledAt: { gte: cutoff } },
-      select: { fromUserId: true, toUserId: true },
-    });
-    const settledPairs = new Set(
-      recentSettlements.map((s) => pairKey(s.fromUserId, s.toUserId))
-    );
+    const settledPairs = settledPairsByGroup.get(group.id) || new Set();
 
     const userById = new Map(group.members.map((m) => [m.userId, m.user]));
 

@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
-import { sendSuccess } from '../utils/response.js';
+import { env } from '../config/env.js';
+import { sendSuccess, sendError } from '../utils/response.js';
 import { requireString } from '../utils/validation.js';
 import { ValidationError } from '../utils/errors.js';
 import {
@@ -29,21 +30,61 @@ export async function getNotifications(req, res, next) {
 
     const groups = await prisma.group.findMany({
       where: { members: { some: { userId } } },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
     });
+    const groupIds = groups.map((g) => g.id);
+
+    // Pull every group's live expenses AND every recent settlement involving the
+    // user in TWO queries total (was N+1: two queries per group), then bucket in
+    // memory by groupId.
+    const [allExpenses, recentSettlements] = await Promise.all([
+      groupIds.length
+        ? prisma.expense.findMany({
+            where: { groupId: { in: groupIds }, deletedAt: null },
+            select: {
+              groupId: true,
+              amountCents: true,
+              paidById: true,
+              createdAt: true,
+              splits: {
+                select: { userId: true, amountCents: true, isSettled: true },
+              },
+            },
+          })
+        : [],
+      groupIds.length
+        ? prisma.settlement.findMany({
+            where: {
+              groupId: { in: groupIds },
+              settledAt: { gte: cutoff },
+              OR: [{ fromUserId: userId }, { toUserId: userId }],
+            },
+            select: { groupId: true, fromUserId: true, toUserId: true },
+          })
+        : [],
+    ]);
+
+    const expensesByGroup = new Map();
+    for (const e of allExpenses) {
+      const list = expensesByGroup.get(e.groupId) || [];
+      list.push(e);
+      expensesByGroup.set(e.groupId, list);
+    }
+    const settledPairsByGroup = new Map();
+    for (const s of recentSettlements) {
+      const set = settledPairsByGroup.get(s.groupId) || new Set();
+      set.add(pairKey(s.fromUserId, s.toUserId));
+      settledPairsByGroup.set(s.groupId, set);
+    }
 
     const notifications = [];
 
     for (const group of groups) {
-      const rawExpenses = await prisma.expense.findMany({
-        where: { groupId: group.id },
-        select: {
-          amountCents: true,
-          paidById: true,
-          createdAt: true,
-          splits: { select: { userId: true, amountCents: true, isSettled: true } },
-        },
-      });
+      const rawExpenses = expensesByGroup.get(group.id) || [];
       if (rawExpenses.length === 0) continue;
 
       // Only debts whose oldest expense is older than 7 days qualify.
@@ -60,18 +101,7 @@ export async function getNotifications(req, res, next) {
       const myDebts = plan.filter((t) => t.from === userId || t.to === userId);
       if (myDebts.length === 0) continue;
 
-      // Recently-recorded settlements for this group involving the user.
-      const recentSettlements = await prisma.settlement.findMany({
-        where: {
-          groupId: group.id,
-          settledAt: { gte: cutoff },
-          OR: [{ fromUserId: userId }, { toUserId: userId }],
-        },
-        select: { fromUserId: true, toUserId: true },
-      });
-      const settledPairs = new Set(
-        recentSettlements.map((s) => pairKey(s.fromUserId, s.toUserId))
-      );
+      const settledPairs = settledPairsByGroup.get(group.id) || new Set();
 
       const userById = new Map(
         group.members.map((m) => [m.userId, m.user])
@@ -142,6 +172,14 @@ export async function subscribePush(req, res, next) {
 // can reach it; it only sends reminders and exposes no user data.
 export async function sendReminders(req, res, next) {
   try {
+    // When CRON_SECRET is configured, require the matching bearer token (Vercel
+    // Cron sends it automatically). Unset → endpoint stays open (unchanged).
+    if (env.cronSecret) {
+      const auth = req.headers.authorization || '';
+      if (auth !== `Bearer ${env.cronSecret}`) {
+        return sendError(res, 401, 'Unauthorized');
+      }
+    }
     const sent = await scheduleDebtReminders();
     return sendSuccess(res, 200, { sent });
   } catch (err) {

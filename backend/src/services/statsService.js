@@ -33,29 +33,29 @@ export async function groupStats(groupId) {
   const [totals, expenseCount, largest, payerCounts, payerSums, currencySums] =
     await Promise.all([
       prisma.expense.aggregate({
-        where: { groupId },
+        where: { groupId, deletedAt: null },
         _sum: { amountCents: true },
       }),
-      prisma.expense.count({ where: { groupId } }),
+      prisma.expense.count({ where: { groupId, deletedAt: null } }),
       prisma.expense.findFirst({
-        where: { groupId },
+        where: { groupId, deletedAt: null },
         orderBy: { amountCents: 'desc' },
-        include: { paidBy: true },
+        include: { paidBy: { select: { id: true, name: true } } },
       }),
       prisma.expense.groupBy({
         by: ['paidById'],
-        where: { groupId },
+        where: { groupId, deletedAt: null },
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
       }),
       prisma.expense.groupBy({
         by: ['paidById'],
-        where: { groupId },
+        where: { groupId, deletedAt: null },
         _sum: { amountCents: true },
       }),
       prisma.expense.groupBy({
         by: ['currency'],
-        where: { groupId },
+        where: { groupId, deletedAt: null },
         _sum: { originalAmount: true },
       }),
     ]);
@@ -118,6 +118,7 @@ export async function groupStats(groupId) {
            COALESCE(SUM(amount_cents), 0)::bigint AS total_cents
     FROM expenses
     WHERE group_id = ${groupId}::uuid
+      AND deleted_at IS NULL
       AND created_at >= date_trunc('month', now()) - interval '11 months'
     GROUP BY year, month
     ORDER BY year, month
@@ -146,20 +147,20 @@ export async function groupStats(groupId) {
 export async function memberStats(groupId, memberId) {
   const [paidAgg, consumedAgg, groupAgg, topCategories] = await Promise.all([
     prisma.expense.aggregate({
-      where: { groupId, paidById: memberId },
+      where: { groupId, paidById: memberId, deletedAt: null },
       _sum: { amountCents: true },
     }),
     prisma.split.aggregate({
-      where: { userId: memberId, expense: { groupId } },
+      where: { userId: memberId, expense: { groupId, deletedAt: null } },
       _sum: { amountCents: true },
     }),
     prisma.expense.aggregate({
-      where: { groupId },
+      where: { groupId, deletedAt: null },
       _sum: { amountCents: true },
     }),
     prisma.expense.groupBy({
       by: ['description'],
-      where: { groupId, paidById: memberId },
+      where: { groupId, paidById: memberId, deletedAt: null },
       _count: { id: true },
       orderBy: { _count: { id: 'desc' } },
       take: 5,
@@ -188,6 +189,7 @@ export async function memberStats(groupId, memberId) {
              COALESCE(SUM(amount_cents), 0)::bigint AS cents
       FROM expenses
       WHERE group_id = ${groupId}::uuid AND paid_by_id = ${memberId}::uuid
+        AND deleted_at IS NULL
         AND created_at >= date_trunc('month', now()) - interval '5 months'
       GROUP BY year, month
     `,
@@ -197,6 +199,7 @@ export async function memberStats(groupId, memberId) {
              COALESCE(SUM(s.amount_cents), 0)::bigint AS cents
       FROM splits s JOIN expenses e ON e.id = s.expense_id
       WHERE e.group_id = ${groupId}::uuid AND s.user_id = ${memberId}::uuid
+        AND e.deleted_at IS NULL
         AND e.created_at >= date_trunc('month', now()) - interval '5 months'
       GROUP BY year, month
     `,
@@ -241,17 +244,24 @@ export async function meStats(userId) {
 
   const [paidThisMonth, consumedAll, paidAll, activeGroup] = await Promise.all([
     prisma.expense.aggregate({
-      where: { paidById: userId, createdAt: { gte: startOfMonth } },
+      where: {
+        paidById: userId,
+        deletedAt: null,
+        createdAt: { gte: startOfMonth },
+      },
       _sum: { amountCents: true },
     }),
-    prisma.split.aggregate({ where: { userId }, _sum: { amountCents: true } }),
+    prisma.split.aggregate({
+      where: { userId, expense: { deletedAt: null } },
+      _sum: { amountCents: true },
+    }),
     prisma.expense.aggregate({
-      where: { paidById: userId },
+      where: { paidById: userId, deletedAt: null },
       _sum: { amountCents: true },
     }),
     prisma.expense.groupBy({
       by: ['groupId'],
-      where: { paidById: userId },
+      where: { paidById: userId, deletedAt: null },
       _count: { id: true },
       orderBy: { _count: { id: 'desc' } },
       take: 1,
@@ -283,6 +293,7 @@ export async function meStats(userId) {
              COALESCE(SUM(amount_cents), 0)::bigint AS cents
       FROM expenses
       WHERE paid_by_id = ${userId}::uuid
+        AND deleted_at IS NULL
         AND created_at >= date_trunc('month', now()) - interval '5 months'
       GROUP BY year, month
     `,
@@ -292,6 +303,7 @@ export async function meStats(userId) {
              COALESCE(SUM(s.amount_cents), 0)::bigint AS cents
       FROM splits s JOIN expenses e ON e.id = s.expense_id
       WHERE s.user_id = ${userId}::uuid
+        AND e.deleted_at IS NULL
         AND e.created_at >= date_trunc('month', now()) - interval '5 months'
       GROUP BY year, month
     `,
@@ -318,32 +330,38 @@ export async function meStats(userId) {
   // Per-group totals + this user's net balance. All sums are DB-side aggregates.
   let group_breakdown = [];
   if (groupIds.length) {
-    const [groupTotals, userPaid, groups, consumedPerGroup] = await Promise.all([
-      prisma.expense.groupBy({
-        by: ['groupId'],
-        where: { groupId: { in: groupIds } },
-        _sum: { amountCents: true },
-      }),
-      prisma.expense.groupBy({
-        by: ['groupId'],
-        where: { groupId: { in: groupIds }, paidById: userId },
-        _sum: { amountCents: true },
-      }),
-      prisma.group.findMany({
-        where: { id: { in: groupIds } },
-        select: { id: true, name: true },
-      }),
-      Promise.all(
-        groupIds.map((gid) =>
-          prisma.split
-            .aggregate({
-              where: { userId, expense: { groupId: gid } },
-              _sum: { amountCents: true },
-            })
-            .then((a) => [gid, a._sum.amountCents || 0])
-        )
-      ),
-    ]);
+    const [groupTotals, userPaid, groups, consumedRowsPerGroup] =
+      await Promise.all([
+        prisma.expense.groupBy({
+          by: ['groupId'],
+          where: { groupId: { in: groupIds }, deletedAt: null },
+          _sum: { amountCents: true },
+        }),
+        prisma.expense.groupBy({
+          by: ['groupId'],
+          where: {
+            groupId: { in: groupIds },
+            paidById: userId,
+            deletedAt: null,
+          },
+          _sum: { amountCents: true },
+        }),
+        prisma.group.findMany({
+          where: { id: { in: groupIds } },
+          select: { id: true, name: true },
+        }),
+        // One grouped query for the user's consumed cents per group (was N
+        // aggregate queries, one per group).
+        prisma.$queryRaw`
+          SELECT e.group_id AS "groupId",
+                 COALESCE(SUM(s.amount_cents), 0)::bigint AS cents
+          FROM splits s JOIN expenses e ON e.id = s.expense_id
+          WHERE s.user_id = ${userId}::uuid
+            AND e.deleted_at IS NULL
+            AND e.group_id = ANY(${groupIds}::uuid[])
+          GROUP BY e.group_id
+        `,
+      ]);
 
     const totalByGroup = new Map(
       groupTotals.map((g) => [g.groupId, g._sum.amountCents || 0])
@@ -351,7 +369,9 @@ export async function meStats(userId) {
     const paidByGroup = new Map(
       userPaid.map((g) => [g.groupId, g._sum.amountCents || 0])
     );
-    const consumedByGroup = new Map(consumedPerGroup);
+    const consumedByGroup = new Map(
+      consumedRowsPerGroup.map((r) => [r.groupId, Number(r.cents)])
+    );
 
     group_breakdown = groups.map((g) => {
       const paid = paidByGroup.get(g.id) || 0;

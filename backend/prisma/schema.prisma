@@ -17,6 +17,9 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   name         String?
+  // Bumped on logout to invalidate every JWT issued before the bump. A token
+  // carries the version it was signed with; requireAuth rejects a mismatch.
+  tokenVersion Int      @default(0) @map("token_version")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -97,6 +100,12 @@ model Expense {
   splitType   SplitType @default(EQUAL) @map("split_type")
   paidById    String    @map("paid_by_id") @db.Uuid
   createdById String    @map("created_by_id") @db.Uuid
+  // Soft delete: NULL = live, timestamp = deleted. Every read filters this so a
+  // deleted expense drops out of balances/stats while staying as an audit trail.
+  deletedAt   DateTime? @map("deleted_at")
+  // Optional client-supplied idempotency key; a unique index makes a retried
+  // create collide instead of inserting a duplicate expense.
+  idempotencyKey String? @unique @map("idempotency_key")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -107,6 +116,7 @@ model Expense {
 
   @@index([groupId])
   @@index([paidById])
+  @@index([deletedAt])
   @@map("expenses")
 }
 

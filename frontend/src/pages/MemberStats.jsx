@@ -38,10 +38,14 @@ export default function MemberStats() {
   const [settleIntent, setSettleIntent] = useState(null);
 
   useEffect(() => {
+    let active = true;
     api
       .getMemberStats(groupId, memberId)
-      .then(setS)
-      .catch((err) => setError(err.message));
+      .then((data) => active && setS(data))
+      .catch((err) => active && setError(err.message));
+    return () => {
+      active = false;
+    };
   }, [groupId, memberId]);
 
   // Look at the group's suggested settlements for a leg between me and this
@@ -49,11 +53,13 @@ export default function MemberStats() {
   useEffect(() => {
     if (!user || memberId === user.id) {
       setPairwise(null);
-      return;
+      return undefined;
     }
+    let active = true;
     api
       .getBalances(groupId)
       .then((b) => {
+        if (!active) return;
         const leg = (b.settlements || []).find(
           (t) =>
             (t.from.id === user.id && t.to.id === memberId) ||
@@ -61,25 +67,28 @@ export default function MemberStats() {
         );
         setPairwise(leg || null);
       })
-      .catch(() => setPairwise(null));
+      .catch(() => active && setPairwise(null));
+    return () => {
+      active = false;
+    };
   }, [groupId, memberId, user]);
 
   function openSettle() {
-    if (!pairwise) return;
+    if (!pairwise || !user) return;
+    // SettleUpModal expects the shape { currentUserId, otherUserId, otherName,
+    // direction, groups:[{ groupId, groupName, amountCents }] } — build that so
+    // the settlement actually posts (the old shape had no `groups`, so confirm
+    // silently did nothing).
+    const iAmPayee = pairwise.to.id === user.id;
+    const other = iAmPayee ? pairwise.from : pairwise.to;
     setSettleIntent({
-      groupId,
-      groupName: null,
-      fromUserId: pairwise.from.id,
-      fromName:
-        pairwise.from.id === user.id
-          ? 'You'
-          : pairwise.from.name || pairwise.from.email,
-      toUserId: pairwise.to.id,
-      toName:
-        pairwise.to.id === user.id
-          ? 'You'
-          : pairwise.to.name || pairwise.to.email,
+      currentUserId: user.id,
+      otherUserId: other.id,
+      otherName: other.name || other.email,
+      otherEmail: other.email,
+      direction: iAmPayee ? 'owes_you' : 'you_owe',
       amountCents: pairwise.amountCents,
+      groups: [{ groupId, groupName: null, amountCents: pairwise.amountCents }],
     });
   }
 

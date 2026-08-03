@@ -43,10 +43,14 @@ export default function GroupStats() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let active = true;
     api
       .getGroupStats(groupId)
-      .then(setS)
-      .catch((err) => setError(err.message));
+      .then((data) => active && setS(data))
+      .catch((err) => active && setError(err.message));
+    return () => {
+      active = false;
+    };
   }, [groupId]);
 
   if (error) return <div className="p-8 text-danger">{error}</div>;

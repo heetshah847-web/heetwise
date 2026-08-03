@@ -1,4 +1,76 @@
-Phase: 10 (Settle Up end-to-end, settlement tracking, settlement history, browser push)
+Phase: 11 (Security + reliability hardening — audit fixes)
+
+---
+
+## Phase 11 — Hardening pass (audit fixes; additive + one migration)
+
+Fixed the issues found in the full-codebase audit. Targeted changes only; no
+feature behavior removed. Frontend `npm run build` succeeds (3125 modules),
+backend **20/20 unit tests pass**, `prisma validate` clean, `createApp()` boots.
+
+### ⚠️ DEPLOY STEP — apply the new migration BEFORE (or with) deploying
+One new migration **`20260804120000_hardening`** adds three columns. The code
+expects them, so run this against Neon before the new backend serves traffic
+(same workflow as every prior phase):
+```
+cd backend && npx prisma migrate deploy
+```
+Columns added: `users.token_version` (default 0), `expenses.deleted_at` (nullable),
+`expenses.idempotency_key` (nullable, unique). All additive + backfilled — no data
+loss, and existing JWTs stay valid (missing version claim is treated as 0).
+
+### Security
+- **JWT logout invalidation** (was: copied token worked for 7 days). `User.tokenVersion`
+  is embedded in the JWT (`utils/jwt.js`) and checked in `middleware/auth.js`;
+  `POST /auth/logout` bumps it, so every prior token for that user is rejected.
+- **Pusher private channels** (was: anyone who knew a group id could subscribe).
+  Channels are now `private-group-<id>` / `private-user-<id>`; new authenticated
+  endpoint **`POST /pusher/auth`** (`controllers/pusherController.js`) signs a
+  subscription only for the matching user or a group member. Frontend authorizes
+  via `lib/pusherClient.js` `customHandler` (sends the cookie, `credentials:'include'`).
+- **Settlement authorization**: `createSettlement` now requires the caller to be
+  one of the two parties (was: any member could settle others' debts). The recorded
+  amount is the **server-computed outstanding**, never the client value, so a stale/
+  tampered amount can't corrupt the ledger.
+- **Cron endpoint guard**: `/notifications/send-reminders` honors an optional
+  `CRON_SECRET` (Vercel Cron sends the bearer token automatically). Unset = open,
+  so existing deploys are unaffected.
+
+### Correctness / data integrity
+- **Soft delete for expenses** (`expenses.deleted_at`): `deleteExpense` stamps
+  `deletedAt` instead of hard-deleting (audit trail). Every expense read filters
+  `deletedAt IS NULL` — group balances, `/balances/summary`, notifications, the
+  reminder sweep, and all of `statsService` (Prisma aggregates + the `$queryRaw`
+  month buckets).
+- **Idempotent expense create** (`expenses.idempotency_key`): the client sends a
+  stable key per submit (`GroupDetail`, `AddExpenseWizard`); a duplicate/retry
+  returns the existing expense instead of inserting a second one (unique index
+  guards the race).
+- **MemberStats "Settle Up" was silently a no-op** (wrong `intent` shape → empty
+  `groups` array → success toast, zero settlements). Now builds the shape
+  `SettleUpModal` expects, so it actually records the settlement.
+
+### Performance
+- **N+1 removed** in `getNotifications`, `scheduleDebtReminders` (were 2 queries
+  per group → 2 queries total, bucketed in memory) and `meStats` per-group consumed
+  (N aggregates → 1 grouped query).
+- **Per-group balances are now cached** (`balances:group:<id>`, node-cache, same
+  invalidation as stats) instead of recomputing on every request.
+- **usePusher ref-counts subscriptions** so one component unmounting no longer
+  tears down a channel shared by others (bell / requests / summary all use the
+  user channel).
+- **Prisma client + pg Pool reused** via a `globalThis` guard (avoids pool churn /
+  connection exhaustion on serverless).
+- Over-fetching trimmed: user relations now `select` id/email/name instead of
+  pulling full rows (incl. `password_hash`) into memory across group/expense/
+  settlement/invitation queries.
+
+### Smaller items
+- `/health` now issues `SELECT 1` (warms the serverless DB pool for any external
+  uptime pinger) and reports `{ status, db }`.
+- Fetch effects in the stats pages (`GroupStats`, `MemberStats`, `MyStats`) guard
+  against setState-after-unmount.
+- Dropped a raw user id from a push error log.
 
 ---
 

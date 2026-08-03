@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -56,6 +56,8 @@ export default function AddExpenseWizard({
 
   const [rates, setRates] = useState({});
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
+  // Stable idempotency key for the in-flight submit (reused on retry).
+  const expenseKeyRef = useRef(null);
 
   useEffect(() => {
     api.getRates().then((r) => {
@@ -126,6 +128,10 @@ export default function AddExpenseWizard({
 
   async function submit() {
     setSubmitting(true);
+    if (!expenseKeyRef.current) {
+      expenseKeyRef.current =
+        globalThis.crypto?.randomUUID?.() ?? String(Date.now() + Math.random());
+    }
     try {
       await api.createExpense(groupId, {
         description,
@@ -134,7 +140,9 @@ export default function AddExpenseWizard({
         paidBy: paidById,
         splitType,
         members: buildMembers(),
+        idempotencyKey: expenseKeyRef.current,
       });
+      expenseKeyRef.current = null;
       setDone(true);
       toast.success('Expense added');
       setTimeout(() => {

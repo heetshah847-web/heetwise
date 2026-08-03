@@ -172,7 +172,7 @@ export default function Summary() {
   }, [load]);
 
   // Real-time: when a settlement touches this user, refetch the summary.
-  usePusher(user ? `user-${user.id}` : null, {
+  usePusher(user ? `private-user-${user.id}` : null, {
     'balance-updated': () => load({ silent: true }),
   });
 

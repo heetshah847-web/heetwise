@@ -31,10 +31,14 @@ export default function MyStats() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let active = true;
     api
       .getMyStats()
-      .then(setS)
-      .catch((err) => setError(err.message));
+      .then((data) => active && setS(data))
+      .catch((err) => active && setError(err.message));
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (error) return <div className="p-8 text-danger">{error}</div>;

@@ -42,7 +42,17 @@ export async function triggerEvent(channelName, eventName, data) {
 }
 
 // Channel-name helpers so producers and consumers agree on the convention.
-export const groupChannel = (groupId) => `group-${groupId}`;
-export const userChannel = (userId) => `user-${userId}`;
+// These are PRIVATE channels: pusher-js must authenticate via /pusher/auth
+// before it can subscribe, so a stranger who guesses a group/user id can no
+// longer listen in (the server checks membership/identity first).
+export const groupChannel = (groupId) => `private-group-${groupId}`;
+export const userChannel = (userId) => `private-user-${userId}`;
+
+// Sign a subscription for a private channel. Returns the auth payload pusher-js
+// expects, or null when Pusher isn't configured (the caller then 403s).
+export function authorizeChannel(socketId, channelName) {
+  if (!pusher) return null;
+  return pusher.authorizeChannel(socketId, channelName);
+}
 
 export const pusherConfigured = isConfigured;

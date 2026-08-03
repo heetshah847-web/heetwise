@@ -3,6 +3,7 @@ import { sendSuccess } from '../utils/response.js';
 import { requireString, optionalString } from '../utils/validation.js';
 import { ForbiddenError } from '../utils/errors.js';
 import { assertMembership } from '../services/membership.js';
+import { get as cacheGet, set as cacheSet } from '../services/cacheService.js';
 import {
   computeBalances,
   simplifyDebts,
@@ -38,7 +39,11 @@ export async function createGroup(req, res, next) {
         createdById: req.user.id,
         members: { create: { userId: req.user.id } },
       },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
     });
     return sendSuccess(res, 201, { group: publicGroup(group) });
   } catch (err) {
@@ -51,7 +56,11 @@ export async function listGroups(req, res, next) {
   try {
     const groups = await prisma.group.findMany({
       where: { members: { some: { userId: req.user.id } } },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     return sendSuccess(res, 200, { groups: groups.map(publicGroup) });
@@ -67,7 +76,11 @@ export async function getGroup(req, res, next) {
     await assertMembership(groupId, req.user.id);
     const group = await prisma.group.findUnique({
       where: { id: groupId },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
     });
     return sendSuccess(res, 200, { group: publicGroup(group) });
   } catch (err) {
@@ -84,7 +97,11 @@ export async function updateGroup(req, res, next) {
     const group = await prisma.group.update({
       where: { id: groupId },
       data: { name },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
     });
     return sendSuccess(res, 200, { group: publicGroup(group) });
   } catch (err) {
@@ -120,8 +137,15 @@ export async function getBalances(req, res, next) {
     const { groupId } = req.params;
     await assertMembership(groupId, req.user.id);
 
+    // Cached per group; the key embeds ":group:<id>" so invalidateGroupStats
+    // (called on every expense create/update/delete and on settlement) clears it
+    // alongside the stats entries. Same data for every member, so it's shared.
+    const cacheKey = `balances:group:${groupId}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return sendSuccess(res, 200, cached);
+
     const rawExpenses = await prisma.expense.findMany({
-      where: { groupId },
+      where: { groupId, deletedAt: null },
       select: {
         paidById: true,
         amountCents: true,
@@ -137,7 +161,7 @@ export async function getBalances(req, res, next) {
     // Attach user info for display.
     const members = await prisma.groupMember.findMany({
       where: { groupId },
-      include: { user: true },
+      include: { user: { select: { id: true, email: true, name: true } } },
     });
     const userById = new Map(members.map((m) => [m.userId, publicUser(m.user)]));
     // Ensure members with zero activity still appear.
@@ -147,7 +171,7 @@ export async function getBalances(req, res, next) {
       }
     }
 
-    return sendSuccess(res, 200, {
+    const payload = {
       balances: balances.map((b) => ({
         user: userById.get(b.userId) ?? { id: b.userId },
         netCents: b.netCents,
@@ -157,7 +181,9 @@ export async function getBalances(req, res, next) {
         to: userById.get(t.to) ?? { id: t.to },
         amountCents: t.amountCents,
       })),
-    });
+    };
+    cacheSet(cacheKey, payload);
+    return sendSuccess(res, 200, payload);
   } catch (err) {
     return next(err);
   }

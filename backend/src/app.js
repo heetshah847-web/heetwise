@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/env.js';
+import { prisma } from './lib/prisma.js';
 import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
 import statsRoutes from './routes/stats.js';
@@ -20,6 +21,7 @@ import {
   getRatesMeta,
   syncRatesNow,
 } from './controllers/currencyController.js';
+import { authenticatePusher } from './controllers/pusherController.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 import { sendSuccess } from './utils/response.js';
 
@@ -50,8 +52,19 @@ export function createApp() {
   app.use(express.json());
   app.use(cookieParser());
 
-  // Health check.
-  app.get('/health', (req, res) => sendSuccess(res, 200, { status: 'ok' }));
+  // Health check. Also issues a trivial query so a periodic ping (e.g. a Vercel
+  // cron or uptime monitor) keeps the serverless DB pool warm and mitigates
+  // cold-start latency after idle. DB errors don't fail the check.
+  app.get('/health', async (req, res) => {
+    let db = 'unknown';
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      db = 'ok';
+    } catch {
+      db = 'unreachable';
+    }
+    return sendSuccess(res, 200, { status: 'ok', db });
+  });
 
   // Auth routes (register, login, logout, me).
   app.use('/auth', authRoutes);
@@ -67,6 +80,9 @@ export function createApp() {
 
   // Cross-group balance summary for the current user.
   app.use('/balances', balanceRoutes);
+
+  // Pusher private-channel authorization (subscribe-time membership check).
+  app.post('/pusher/auth', requireAuth, authenticatePusher);
 
   // Notifications: unsettled debts older than 7 days for the current user.
   app.get('/notifications', requireAuth, getNotifications);

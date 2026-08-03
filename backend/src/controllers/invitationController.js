@@ -37,8 +37,10 @@ function publicInvitation(inv) {
 }
 
 const withRelations = {
-  group: { include: { createdBy: true } },
-  invitedBy: true,
+  group: {
+    include: { createdBy: { select: { id: true, email: true, name: true } } },
+  },
+  invitedBy: { select: { id: true, email: true, name: true } },
 };
 
 // Core: create a PENDING invitation for `email` to join `groupId`. Used by BOTH
@@ -169,7 +171,11 @@ export async function acceptInvitation(req, res, next) {
 
     const group = await prisma.group.findUnique({
       where: { id: inv.groupId },
-      include: { members: { include: { user: true } } },
+      include: {
+        members: {
+          include: { user: { select: { id: true, email: true, name: true } } },
+        },
+      },
     });
 
     return sendSuccess(res, 200, {

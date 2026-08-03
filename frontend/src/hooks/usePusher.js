@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { getPusher } from '../lib/pusherClient.js';
+import {
+  getPusher,
+  subscribeChannel,
+  unsubscribeChannel,
+} from '../lib/pusherClient.js';
 
 // Subscribe to `channelName` and bind an { eventName: handler } map for as long
 // as the component is mounted (and the channel name is unchanged). No-ops when
@@ -13,10 +17,11 @@ export function usePusher(channelName, handlers) {
 
   useEffect(() => {
     if (!channelName) return undefined;
-    const pusher = getPusher();
-    if (!pusher) return undefined;
+    if (!getPusher()) return undefined;
 
-    const channel = pusher.subscribe(channelName);
+    const channel = subscribeChannel(channelName);
+    if (!channel) return undefined;
+
     const bound = {};
     for (const eventName of Object.keys(handlersRef.current || {})) {
       const fn = (data) => handlersRef.current[eventName]?.(data);
@@ -28,7 +33,8 @@ export function usePusher(channelName, handlers) {
       for (const eventName of Object.keys(bound)) {
         channel.unbind(eventName, bound[eventName]);
       }
-      pusher.unsubscribe(channelName);
+      // Ref-counted: only actually unsubscribes when the last user leaves.
+      unsubscribeChannel(channelName);
     };
   }, [channelName]);
 }

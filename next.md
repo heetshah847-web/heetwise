@@ -7,6 +7,34 @@ Phase 10 made **Settle Up** work end-to-end (settlement tracking, history, live
 cascade) and added **browser push notifications**. Deploy steps below; **the new
 env vars + migrations + cron are the important part.**
 
+## Phase 11 deploy checklist (hardening) — DO THESE FIRST
+
+### 1. Apply the new migration (required — the code depends on its columns)
+From `backend/` with `DATABASE_URL` set:
+`npx prisma migrate deploy` — applies **`20260804120000_hardening`**
+(`users.token_version`, `expenses.deleted_at`, `expenses.idempotency_key`). All
+additive + backfilled; existing logins stay valid. `prisma generate` runs via
+`postinstall`. **Deploy the backend only after this migration is applied**, or
+expense/auth reads will error on the missing columns.
+
+### 2. Backend env var (optional but recommended)
+- `CRON_SECRET` — set it in the backend Vercel project so
+  `/notifications/send-reminders` rejects anything without the matching bearer
+  token. Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` automatically.
+  Leave unset to keep the endpoint open (unchanged behavior).
+
+### 3. Pusher (unchanged env, new behavior)
+Channels are now **private** and authorized at subscribe time via `POST /pusher/auth`.
+No new env vars — the existing `PUSHER_*` (backend) / `VITE_PUSHER_*` (frontend)
+still drive it, and it remains a safe no-op when unconfigured. If Pusher IS
+configured, ensure the frontend origin is in the backend CORS allow-list
+(`FRONTEND_URL`) so the credentialed auth request succeeds (it already must be).
+
+### 4. Optional: keep the DB warm
+`/health` now runs `SELECT 1`. Point any external uptime monitor at it every few
+minutes to reduce Neon cold-start latency (Vercel Hobby crons only run daily, so
+this is left to an external pinger rather than a cron).
+
 ## Phase 10 deploy checklist (Settle Up + push) — DO THESE
 
 ### Database migrations (run on every environment)

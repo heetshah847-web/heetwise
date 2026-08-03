@@ -20,14 +20,28 @@ export async function requireAuth(req, res, next) {
 
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, name: true, createdAt: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+        tokenVersion: true,
+      },
     });
 
     if (!user) {
       return sendError(res, 401, 'User no longer exists');
     }
 
-    req.user = user;
+    // Tokens issued before a logout carry an older version. Tokens issued before
+    // this feature existed have no `ver` claim and are treated as version 0, so
+    // existing sessions stay valid across the deploy.
+    if ((payload.ver ?? 0) !== user.tokenVersion) {
+      return sendError(res, 401, 'Session expired, please log in again');
+    }
+
+    const { tokenVersion, ...safeUser } = user;
+    req.user = safeUser;
     return next();
   } catch (err) {
     return next(err);

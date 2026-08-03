@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { sendSuccess } from '../utils/response.js';
 import { requireUuid, requireInt, requireString } from '../utils/validation.js';
-import { ValidationError, NotFoundError } from '../utils/errors.js';
+import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import { assertMembership } from '../services/membership.js';
 import {
   invalidateGroupStats,
@@ -56,6 +56,14 @@ export async function createSettlement(req, res, next) {
       throw new ValidationError('fromUserId and toUserId must be different');
     }
 
+    // Authorization: you may only record a settlement you are part of. This stops
+    // one member from marking debts settled between two OTHER members.
+    if (req.user.id !== fromUserId && req.user.id !== toUserId) {
+      throw new ForbiddenError(
+        'You can only settle debts that you are part of'
+      );
+    }
+
     const settlement = await prisma.$transaction(async (tx) => {
       // 1. The caller must be a member of the group. (Defense in depth: the
       //    route guard already enforces this, but the spec wants it inside the
@@ -82,7 +90,7 @@ export async function createSettlement(req, res, next) {
           where: {
             userId: fromUserId,
             isSettled: false,
-            expense: { groupId, paidById: toUserId },
+            expense: { groupId, paidById: toUserId, deletedAt: null },
           },
           _sum: { amountCents: true },
         }),
@@ -90,7 +98,7 @@ export async function createSettlement(req, res, next) {
           where: {
             userId: toUserId,
             isSettled: false,
-            expense: { groupId, paidById: fromUserId },
+            expense: { groupId, paidById: fromUserId, deletedAt: null },
           },
           _sum: { amountCents: true },
         }),
@@ -103,10 +111,22 @@ export async function createSettlement(req, res, next) {
         );
       }
 
-      // 3. Record the settlement.
+      // 3. Record the settlement. The amount is the SERVER-computed outstanding
+      //    balance, never the client-supplied value — a full settle-up always
+      //    records (and clears) exactly what is actually owed, so a stale or
+      //    tampered amount can't corrupt the ledger.
       const created = await tx.settlement.create({
-        data: { groupId, fromUserId, toUserId, amountCents, currency },
-        include: { fromUser: true, toUser: true },
+        data: {
+          groupId,
+          fromUserId,
+          toUserId,
+          amountCents: outstanding,
+          currency,
+        },
+        include: {
+        fromUser: { select: { id: true, email: true, name: true } },
+        toUser: { select: { id: true, email: true, name: true } },
+      },
       });
 
       // 4. Mark every split representing debt BETWEEN these two users (in either
@@ -117,7 +137,7 @@ export async function createSettlement(req, res, next) {
           where: {
             userId: fromUserId,
             isSettled: false,
-            expense: { groupId, paidById: toUserId },
+            expense: { groupId, paidById: toUserId, deletedAt: null },
           },
           data: { isSettled: true },
         }),
@@ -125,7 +145,7 @@ export async function createSettlement(req, res, next) {
           where: {
             userId: toUserId,
             isSettled: false,
-            expense: { groupId, paidById: fromUserId },
+            expense: { groupId, paidById: fromUserId, deletedAt: null },
           },
           data: { isSettled: true },
         }),
@@ -141,13 +161,15 @@ export async function createSettlement(req, res, next) {
     invalidateSummaries([fromUserId, toUserId]);
 
     const shaped = publicSettlement(settlement);
+    // Authoritative amount actually settled (server-computed outstanding).
+    const settledCents = settlement.amountCents;
 
     // Real-time cascade (all best-effort; no-ops when Pusher is unconfigured).
     await Promise.all([
       triggerEvent(groupChannel(groupId), 'settlement-created', {
         fromUserId,
         toUserId,
-        amountCents,
+        amountCents: settledCents,
         settlement: shaped,
       }),
       triggerEvent(userChannel(fromUserId), 'balance-updated', {
@@ -169,7 +191,7 @@ export async function createSettlement(req, res, next) {
     });
     await sendPushNotification(toUserId, {
       title: 'Debt settled',
-      body: `${payerName} settled $${centsToUsd(amountCents)} with you in ${
+      body: `${payerName} settled $${centsToUsd(settledCents)} with you in ${
         group?.name ?? 'your group'
       }`,
     });
@@ -192,7 +214,10 @@ export async function listSettlements(req, res, next) {
     await assertMembership(groupId, req.user.id); // 404 for non-members
     const settlements = await prisma.settlement.findMany({
       where: { groupId },
-      include: { fromUser: true, toUser: true },
+      include: {
+        fromUser: { select: { id: true, email: true, name: true } },
+        toUser: { select: { id: true, email: true, name: true } },
+      },
       orderBy: { settledAt: 'desc' },
     });
     return sendSuccess(res, 200, {

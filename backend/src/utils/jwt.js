@@ -1,9 +1,11 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 
-// Sign a JWT carrying the user id as the subject.
-export function signToken(userId) {
-  return jwt.sign({ sub: userId }, env.jwtSecret, {
+// Sign a JWT carrying the user id as the subject and the user's current token
+// version. requireAuth rejects the token if the stored version has moved on
+// (i.e. the user has since logged out), which is how a copied token is revoked.
+export function signToken(userId, tokenVersion = 0) {
+  return jwt.sign({ sub: userId, ver: tokenVersion }, env.jwtSecret, {
     expiresIn: env.jwtExpiresIn,
   });
 }

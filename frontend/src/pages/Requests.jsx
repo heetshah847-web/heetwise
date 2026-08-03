@@ -30,7 +30,7 @@ export default function Requests() {
   }, [load]);
 
   // Refresh the list live when a new invitation arrives.
-  usePusher(user ? `user-${user.id}` : null, {
+  usePusher(user ? `private-user-${user.id}` : null, {
     'invitation-received': () => load(),
   });
 
