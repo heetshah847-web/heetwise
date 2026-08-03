@@ -1,4 +1,101 @@
-Phase: 7 (deployment) — backend adapted for Vercel serverless
+Phase: 8 (invitations, settlements, notifications, real-time, multi-origin CORS)
+
+---
+
+## Phase 8 — Invitations, settle-up, notifications, real-time, CORS (NEW)
+
+Six fixes/features. New tables + endpoints are additive; the two behavior
+changes are (a) adding a member now creates an INVITATION instead of joining
+directly, and (b) CORS now accepts a list of origins.
+
+### Fix 1 — Multi-origin CORS
+- `config/env.js` now exposes `frontendUrls` (array) parsed from `FRONTEND_URL`,
+  which may be a **comma-separated list**. `frontendUrl` (first entry) kept.
+- `app.js` CORS callback allows an origin if it is in `frontendUrls` (no-Origin
+  requests still allowed; anything else → 403 via the error handler, unchanged).
+- `.env` / `.env.example`: `FRONTEND_URL` documented as comma-separated; local
+  `.env` set to `http://localhost:5173,https://heetwise.vercel.app,https://heetwise-wnkk.vercel.app`.
+
+### Fix 2 — SPA routing on Vercel / iOS refresh 404
+- `frontend/public/_redirects` → `/*  /index.html  200` (copied into `dist/`).
+- `frontend/vercel.json` → `{"rewrites":[{"source":"/((?!api).*)","destination":"/index.html"}]}`.
+
+### Fix 3 — Group invitations
+- Schema: `InvitationStatus` enum (PENDING/ACCEPTED/DECLINED) + `GroupInvitation`
+  model (`group_invitations`): id, groupId, invitedEmail, invitedUserId?,
+  invitedById, status, createdAt, expiresAt (7-day TTL). Relations added to
+  User (`invitationsSent`/`invitationsReceived`) and Group (`invitations`).
+  Also added nullable `Group.description` (shown to invitees).
+- Migration: **`20260802120000_add_group_invitations`** (APPLIED to the DB).
+- `controllers/invitationController.js`:
+  - `createInvitation` — used by BOTH `POST /groups/:groupId/members` (repointed)
+    and `POST /groups/:groupId/invitations`. Guards: group exists, invitee not
+    already a member, no duplicate PENDING invite. Fires Pusher
+    `invitation-received` on `user-<invitedUserId>` when the invitee has an account.
+  - `getPendingInvitations` → `GET /invitations/pending` (own email, PENDING,
+    non-expired).
+  - `acceptInvitation` → `POST /invitations/:id/accept` (idempotent membership
+    upsert + status ACCEPTED; 400 if not pending/expired; 404 if not addressed
+    to the caller).
+  - `declineInvitation` → `POST /invitations/:id/decline`.
+- `routes/invitationRoutes.js` mounted at `/invitations`. The old
+  `groupController.addMember` (direct add) was removed — replaced by the invite flow.
+- Frontend: `pages/Requests.jsx` (route `/requests`, **Requests** tab in the
+  sidebar) — pending invites with group name/description, owner, inviter,
+  Accept/Decline; live-refreshes on `invitation-received`. GroupDetail's
+  add-member form now says **Invite** and toasts "Invitation sent".
+
+### Fix 4 — Settle up + notifications
+- Schema: `Settlement` model (`settlements`): id, groupId, fromUserId, toUserId,
+  amountCents, currency, settledAt, createdAt. Relations on User/Group.
+- Migration: **`20260802120100_add_settlements`** (APPLIED to the DB).
+- `controllers/settlementController.js` → `POST /groups/:groupId/settlements`
+  (both parties must be members; `fromUserId != toUserId`; invalidates group
+  stats cache; fires Pusher `expense-settled` on `group-<id>`).
+- `controllers/notificationController.js` → `GET /notifications`: for each of
+  the user's groups, computes balances (`utils/balance.js`), takes the simplified
+  settlement legs involving the user, keeps those whose **oldest expense is > 7
+  days old** and that have **no Settlement recorded in the last 7 days**. Each
+  item: `{ type:'UNSETTLED_DEBT', direction, groupId, groupName, otherPersonId,
+  otherPersonName, amountCents, currency }`. NOTE: balances are still computed
+  from expenses only — settlements are an audit trail + notification driver and
+  do **not** alter `computeBalances` (kept per "don't change what isn't asked").
+- Frontend: `components/NotificationBell.jsx` (header bell, red badge, framer
+  slide-in panel) + `components/SettleUpModal.jsx` (confirm modal → POST
+  settlement). Settle Up buttons also on GroupDetail's suggested-settlement rows
+  (viewer's legs) and on the **MemberStats** page (pairwise leg vs the viewer).
+
+### Fix 5 — Tick-based member selection for splits
+- Both `pages/GroupDetail.jsx` and `components/AddExpenseWizard.jsx`: each member
+  row has a checkbox (all ticked by default). Only ticked members are sent to the
+  API (and thus to `splitService.calculateSplits`). Live counters (percentage
+  remaining / exact unassigned) count ticked members only; submit is disabled
+  until valid and at least one member is ticked. Works for all four split types.
+
+### Fix 6 — Real-time with Pusher
+- Backend: `npm install pusher`; `services/pusherService.js` initializes from
+  `PUSHER_APP_ID/KEY/SECRET/CLUSTER` and exports `triggerEvent(channel, event,
+  data)` + channel helpers. **Safe no-op when unconfigured** (dev/tests/serverless
+  without creds still work). Triggers: `expense-added` (on create),
+  `expense-settled` (on settlement), `invitation-received` (on invite).
+- Frontend: `npm install pusher-js`; `lib/pusherClient.js` (public
+  `VITE_PUSHER_KEY`/`VITE_PUSHER_CLUSTER` only — secret never shipped) +
+  `hooks/usePusher.js`. GroupDetail subscribes to `group-<id>` and **prepends**
+  new expenses live (+ refreshes balances); NotificationBell subscribes to
+  `user-<id>` and bumps the badge on `invitation-received`.
+
+### Prisma 7 note
+- Prisma 7 does not allow `url` in the `datasource` block; the migrate URL comes
+  from the existing `prisma.config.ts` (`process.env.DATABASE_URL`). Datasource
+  block left url-less; runtime still uses the pg driver adapter.
+
+### Verified
+- `prisma validate` clean; `prisma generate` OK; **both migrations applied** to
+  the Neon DB via `prisma migrate deploy`. Backend **20/20 unit tests pass**;
+  `app.js` imports/boots cleanly (Pusher optional). Frontend `npm run build`
+  succeeds (3122 modules; `_redirects` emitted into `dist/`).
+- Not run here: full integration suite (needs a test DB); live Pusher broadcast
+  (no creds set) — code paths are no-op-safe without them.
 
 ---
 

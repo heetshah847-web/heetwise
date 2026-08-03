@@ -17,6 +17,7 @@ import { computeEqualSplits, buildExactSplits } from '../utils/split.js';
 import { calculateSplits } from '../services/splitService.js';
 import { getRate } from '../services/rateService.js';
 import { invalidateGroupStats } from '../services/cacheService.js';
+import { triggerEvent, groupChannel } from '../services/pusherService.js';
 
 // EQUAL/EXACT are the legacy two; PERCENTAGE/WEIGHT were added in the smart
 // split phase. The full set is enforced by validateSplit + splitService.
@@ -203,10 +204,16 @@ export async function createExpense(req, res, next) {
     });
 
     // A new expense changes every group stat — drop the cached entries.
-    // (The future settlement endpoint must call invalidateGroupStats too.)
     invalidateGroupStats(groupId);
 
-    return sendSuccess(res, 201, { expense: publicExpense(expense) });
+    // Broadcast so other members viewing this group see it live (no-op if
+    // Pusher isn't configured).
+    const shaped = publicExpense(expense);
+    await triggerEvent(groupChannel(groupId), 'expense-added', {
+      expense: shaped,
+    });
+
+    return sendSuccess(res, 201, { expense: shaped });
   } catch (err) {
     return next(err);
   }

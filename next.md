@@ -1,6 +1,48 @@
-# NEXT — Phase 7: Deployment
+# NEXT — Deployment
 
-Security hardening (Phase 6) is done. The final phase is deploying the app.
+Security hardening (Phase 6) is done. Phase 8 added invitations, settlements,
+notifications, tick-based splits, multi-origin CORS, and Pusher real-time.
+Deploy steps below; **the new env vars are the important part.**
+
+## Phase 8 deploy checklist (do these on the live deploy)
+
+### Backend env vars (Vercel → backend project → Settings → Environment Variables)
+Add the Pusher server credentials from your Pusher Channels app dashboard:
+- `PUSHER_APP_ID`
+- `PUSHER_KEY`
+- `PUSHER_SECRET`  ← **secret; backend only, never in the frontend project**
+- `PUSHER_CLUSTER` (e.g. `mt1`, `us2`, `eu`, `ap2`)
+
+If these four are omitted the API still runs — real-time broadcasts simply become
+no-ops and clients see fresh data on their next fetch/navigation.
+
+Also update CORS for the live frontend URL(s):
+- `FRONTEND_URL` now accepts a **comma-separated list**, e.g.
+  `FRONTEND_URL=https://heetwise.vercel.app,https://heetwise-wnkk.vercel.app`
+  (add every domain/preview host that must be allowed).
+
+### Frontend env vars (Vercel → frontend project → Settings → Environment Variables)
+Client-safe Pusher values only (these ship in the bundle — never add the secret):
+- `VITE_PUSHER_KEY` (the same public app key as `PUSHER_KEY`)
+- `VITE_PUSHER_CLUSTER` (same cluster as the backend)
+- (existing) `VITE_API_URL` = the backend HTTPS URL.
+
+### Database migrations
+Both Phase 8 migrations (`add_group_invitations`, `add_settlements`) were already
+applied to the Neon database via `prisma migrate deploy`. On any fresh/other
+environment run, from `backend/`, with `DATABASE_URL` set:
+`npx prisma migrate deploy` (idempotent — it skips already-applied migrations).
+
+### SPA routing
+`frontend/vercel.json` (rewrites) + `frontend/public/_redirects` are committed, so
+deep links / iOS refresh serve `index.html` instead of 404. No dashboard config
+needed — Vercel picks up `vercel.json` automatically.
+
+---
+
+## Phase 7 context — Deployment
+
+The final phase is deploying the app.
 
 > **Plan update (Vercel serverless backend):** the backend is now being deployed as a
 > **Vercel serverless function**, not a long-running Railway service. Serverless can't

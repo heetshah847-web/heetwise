@@ -11,7 +11,9 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { ArrowLeft } from 'lucide-react';
-import { api } from '../api/client.js';
+import { api, formatCents } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import SettleUpModal from '../components/SettleUpModal.jsx';
 import { COLORS, POSITIVE, NEGATIVE, formatUSD, monthLabel } from '../theme.js';
 
 const axisProps = { stroke: '#2a2a2a', tick: { fill: '#71717a', fontSize: 12 } };
@@ -28,8 +30,12 @@ const tooltipStyle = {
 
 export default function MemberStats() {
   const { groupId, memberId } = useParams();
+  const { user } = useAuth();
   const [s, setS] = useState(null);
   const [error, setError] = useState('');
+  // Pairwise settlement leg between the viewer and this member (if any).
+  const [pairwise, setPairwise] = useState(null);
+  const [settleIntent, setSettleIntent] = useState(null);
 
   useEffect(() => {
     api
@@ -37,6 +43,45 @@ export default function MemberStats() {
       .then(setS)
       .catch((err) => setError(err.message));
   }, [groupId, memberId]);
+
+  // Look at the group's suggested settlements for a leg between me and this
+  // member — that's the concrete "you owe / owes you" amount to settle.
+  useEffect(() => {
+    if (!user || memberId === user.id) {
+      setPairwise(null);
+      return;
+    }
+    api
+      .getBalances(groupId)
+      .then((b) => {
+        const leg = (b.settlements || []).find(
+          (t) =>
+            (t.from.id === user.id && t.to.id === memberId) ||
+            (t.from.id === memberId && t.to.id === user.id)
+        );
+        setPairwise(leg || null);
+      })
+      .catch(() => setPairwise(null));
+  }, [groupId, memberId, user]);
+
+  function openSettle() {
+    if (!pairwise) return;
+    setSettleIntent({
+      groupId,
+      groupName: null,
+      fromUserId: pairwise.from.id,
+      fromName:
+        pairwise.from.id === user.id
+          ? 'You'
+          : pairwise.from.name || pairwise.from.email,
+      toUserId: pairwise.to.id,
+      toName:
+        pairwise.to.id === user.id
+          ? 'You'
+          : pairwise.to.name || pairwise.to.email,
+      amountCents: pairwise.amountCents,
+    });
+  }
 
   if (error) return <div className="p-8 text-danger">{error}</div>;
   if (!s) return <div className="p-8 text-muted">Loading…</div>;
@@ -68,18 +113,28 @@ export default function MemberStats() {
         </div>
       </div>
 
-      <div className="mt-4 rounded-xl border border-border bg-surface p-5">
-        <span className="text-sm text-muted">Net balance: </span>
-        <strong
-          className="text-2xl"
-          style={{ color: owed ? POSITIVE : NEGATIVE }}
-        >
-          {owed ? '+' : '−'}
-          {formatUSD(Math.abs(s.net_balance))}
-        </strong>
-        <span className="ml-2 text-sm text-muted">
-          {owed ? '(is owed money)' : '(owes money)'}
-        </span>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-5">
+        <div>
+          <span className="text-sm text-muted">Net balance: </span>
+          <strong
+            className="text-2xl"
+            style={{ color: owed ? POSITIVE : NEGATIVE }}
+          >
+            {owed ? '+' : '−'}
+            {formatUSD(Math.abs(s.net_balance))}
+          </strong>
+          <span className="ml-2 text-sm text-muted">
+            {owed ? '(is owed money)' : '(owes money)'}
+          </span>
+        </div>
+        {pairwise && (
+          <button
+            onClick={openSettle}
+            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
+          >
+            Settle Up · {formatCents(pairwise.amountCents)}
+          </button>
+        )}
       </div>
 
       <div className="mt-6 rounded-xl border border-border bg-surface p-5">
@@ -113,6 +168,12 @@ export default function MemberStats() {
           </ol>
         )}
       </div>
+
+      <SettleUpModal
+        intent={settleIntent}
+        onClose={() => setSettleIntent(null)}
+        onSettled={() => setPairwise(null)}
+      />
     </div>
   );
 }

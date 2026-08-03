@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { sendSuccess } from '../utils/response.js';
-import { requireString, requireEmail } from '../utils/validation.js';
-import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors.js';
+import { requireString, optionalString } from '../utils/validation.js';
+import { ForbiddenError } from '../utils/errors.js';
 import { assertMembership } from '../services/membership.js';
 import { computeBalances, simplifyDebts } from '../utils/balance.js';
 
@@ -13,6 +13,7 @@ function publicGroup(group) {
   return {
     id: group.id,
     name: group.name,
+    description: group.description ?? null,
     createdById: group.createdById,
     createdAt: group.createdAt,
     members: group.members?.map((m) => publicUser(m.user)),
@@ -23,9 +24,13 @@ function publicGroup(group) {
 export async function createGroup(req, res, next) {
   try {
     const name = requireString(req.body?.name, 'name', { max: 120 });
+    const description = optionalString(req.body?.description, 'description', {
+      max: 500,
+    });
     const group = await prisma.group.create({
       data: {
         name,
+        description,
         createdById: req.user.id,
         members: { create: { userId: req.user.id } },
       },
@@ -100,35 +105,10 @@ export async function deleteGroup(req, res, next) {
   }
 }
 
-// POST /groups/:groupId/members — add a member by email (members only).
-export async function addMember(req, res, next) {
-  try {
-    const { groupId } = req.params;
-    await assertMembership(groupId, req.user.id);
-    const email = requireEmail(req.body?.email);
-
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      throw new NotFoundError('No user with that email');
-    }
-
-    const existing = await prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId, userId: user.id } },
-    });
-    if (existing) {
-      throw new ConflictError('User is already a member of this group');
-    }
-
-    await prisma.groupMember.create({ data: { groupId, userId: user.id } });
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      include: { members: { include: { user: true } } },
-    });
-    return sendSuccess(res, 201, { group: publicGroup(group) });
-  } catch (err) {
-    return next(err);
-  }
-}
+// NOTE: adding a member by email is now handled by the invitation flow
+// (see controllers/invitationController.js — createInvitation). A user only
+// joins a group after accepting their invitation, so there is no longer a
+// "direct add" here.
 
 // GET /groups/:groupId/balances — net balances + simplified settlements.
 export async function getBalances(req, res, next) {

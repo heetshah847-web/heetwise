@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BarChart3, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { api, formatCents } from '../api/client.js';
 import { cn } from '../lib/cn.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { usePusher } from '../hooks/usePusher.js';
+import SettleUpModal from '../components/SettleUpModal.jsx';
 
 function memberLabel(m) {
   return m.name ? `${m.name} (${m.email})` : m.email;
@@ -24,6 +28,7 @@ const headingCls = 'mb-4 text-xs font-semibold uppercase tracking-wide text-mute
 
 export default function GroupDetail() {
   const { groupId } = useParams();
+  const { user } = useAuth();
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
@@ -33,6 +38,7 @@ export default function GroupDetail() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [settleIntent, setSettleIntent] = useState(null);
 
   // Add-member form
   const [memberEmail, setMemberEmail] = useState('');
@@ -50,6 +56,9 @@ export default function GroupDetail() {
   const [exactAmounts, setExactAmounts] = useState({});
   const [percentages, setPercentages] = useState({});
   const [weights, setWeights] = useState({});
+  // Ticked members participate in the split. Default: everyone ticked
+  // (a member is included unless explicitly set to false).
+  const [checked, setChecked] = useState({});
 
   const load = useCallback(async () => {
     setError('');
@@ -83,6 +92,30 @@ export default function GroupDetail() {
     load();
   }, [load]);
 
+  // Refresh only the balances + settlements (used after live events).
+  const refreshBalances = useCallback(async () => {
+    try {
+      const b = await api.getBalances(groupId);
+      setBalances(b.balances);
+      setSettlements(b.settlements);
+    } catch {
+      /* non-critical */
+    }
+  }, [groupId]);
+
+  // Real-time: prepend expenses added by anyone, refresh balances on settle.
+  usePusher(`group-${groupId}`, {
+    'expense-added': (payload) => {
+      const ex = payload?.expense;
+      if (!ex) return;
+      setExpenses((prev) =>
+        prev.some((p) => p.id === ex.id) ? prev : [ex, ...prev]
+      );
+      refreshBalances();
+    },
+    'expense-settled': () => refreshBalances(),
+  });
+
   async function loadMore() {
     if (!nextCursor) return;
     setError('');
@@ -102,7 +135,7 @@ export default function GroupDetail() {
     try {
       await api.addMember(groupId, memberEmail);
       setMemberEmail('');
-      await load();
+      toast.success('Invitation sent — they join once they accept');
     } catch (err) {
       setError(err.message);
     }
@@ -110,27 +143,35 @@ export default function GroupDetail() {
 
   // ---- Derived split state (recomputed every render, live) ----
   const members = group?.members ?? [];
+  const isChecked = (id) => checked[id] !== false; // default ticked
+  const tickedMembers = members.filter((m) => isChecked(m.id));
   const total = Number(amount) || 0;
   const weightOf = (id) => Number(weights[id] ?? '1');
 
-  const exactAssigned = members.reduce(
+  function toggleChecked(id) {
+    // Flip: currently-false → true, otherwise → false.
+    setChecked((p) => ({ ...p, [id]: p[id] === false }));
+  }
+
+  const exactAssigned = tickedMembers.reduce(
     (s, m) => s + (Number(exactAmounts[m.id]) || 0),
     0
   );
   const exactRemaining = total - exactAssigned;
 
-  const percentTotal = members.reduce(
+  const percentTotal = tickedMembers.reduce(
     (s, m) => s + (Number(percentages[m.id]) || 0),
     0
   );
   const percentRemaining = 100 - percentTotal;
 
-  const weightSum = members.reduce((s, m) => s + weightOf(m.id), 0);
-  const anyBadWeight = members.some((m) => !(weightOf(m.id) > 0));
+  const weightSum = tickedMembers.reduce((s, m) => s + weightOf(m.id), 0);
+  const anyBadWeight = tickedMembers.some((m) => !(weightOf(m.id) > 0));
 
   function invalidReason() {
     if (!description.trim()) return 'Enter a description';
     if (!(total > 0)) return 'Enter an amount greater than $0';
+    if (tickedMembers.length === 0) return 'Select at least one member to split with';
     if (splitType === 'EXACT' && Math.abs(exactRemaining) > 0.01) {
       return `Exact amounts must sum to $${total.toFixed(2)} — $${Math.abs(
         exactRemaining
@@ -148,8 +189,9 @@ export default function GroupDetail() {
   }
   const reason = invalidReason();
 
+  // Only TICKED members go into the split payload.
   function buildMembersPayload() {
-    return members.map((m) => {
+    return tickedMembers.map((m) => {
       if (splitType === 'EXACT') {
         return { userId: m.id, amount: Number(exactAmounts[m.id]) || 0 };
       }
@@ -197,6 +239,19 @@ export default function GroupDetail() {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  // Build a settle intent for a suggested settlement that involves the viewer.
+  function settleFor(s) {
+    setSettleIntent({
+      groupId,
+      groupName: group?.name,
+      fromUserId: s.from.id,
+      fromName: s.from.id === user?.id ? 'You' : s.from.name || s.from.email,
+      toUserId: s.to.id,
+      toName: s.to.id === user?.id ? 'You' : s.to.name || s.to.email,
+      amountCents: s.amountCents,
+    });
   }
 
   if (loading)
@@ -261,7 +316,7 @@ export default function GroupDetail() {
           <form onSubmit={handleAddMember} className="mt-5 flex gap-2">
             <input
               type="email"
-              placeholder="Add member by email"
+              placeholder="Invite member by email"
               value={memberEmail}
               onChange={(e) => setMemberEmail(e.target.value)}
               required
@@ -271,7 +326,7 @@ export default function GroupDetail() {
               type="submit"
               className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
             >
-              Add
+              Invite
             </button>
           </form>
         </section>
@@ -320,19 +375,31 @@ export default function GroupDetail() {
             <p className="text-sm text-muted">All settled up.</p>
           ) : (
             <div className="space-y-2">
-              {settlements.map((s, i) => (
-                <div
-                  key={i}
-                  className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3 text-sm"
-                >
-                  <span className="font-medium">{memberLabel(s.from)}</span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-3 py-1 text-brand-400">
-                    <ArrowRight size={14} />
-                    {formatCents(s.amountCents)}
-                  </span>
-                  <span className="font-medium">{memberLabel(s.to)}</span>
-                </div>
-              ))}
+              {settlements.map((s, i) => {
+                const involvesMe =
+                  s.from.id === user?.id || s.to.id === user?.id;
+                return (
+                  <div
+                    key={i}
+                    className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-4 py-3 text-sm"
+                  >
+                    <span className="font-medium">{memberLabel(s.from)}</span>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-3 py-1 text-brand-400">
+                      <ArrowRight size={14} />
+                      {formatCents(s.amountCents)}
+                    </span>
+                    <span className="font-medium">{memberLabel(s.to)}</span>
+                    {involvesMe && (
+                      <button
+                        onClick={() => settleFor(s)}
+                        className="ml-auto rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-600"
+                      >
+                        Settle Up
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -412,27 +479,61 @@ export default function GroupDetail() {
               </p>
             )}
 
-            {/* Per-member inputs depend on the selected split type. */}
+            {/* Per-member rows: a checkbox controls who is included in the
+                split; the input shown depends on the selected split type. */}
             <div className="rounded-lg border border-border bg-bg p-4">
-              {splitType === 'EQUAL' && (
-                <ul className="space-y-1 text-sm text-muted">
-                  {members.map((m) => (
-                    <li key={m.id} className="flex justify-between">
-                      <span>{memberLabel(m)}</span>
-                      <span>even share</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div className="mb-2 flex items-center justify-between text-xs text-muted">
+                <span>Split between ({tickedMembers.length} selected)</span>
+                {splitType === 'PERCENTAGE' && (
+                  <span
+                    className={cn(
+                      Math.abs(percentRemaining) > 0.01
+                        ? 'text-danger'
+                        : 'text-success'
+                    )}
+                  >
+                    {percentRemaining.toFixed(2)}% remaining
+                  </span>
+                )}
+                {splitType === 'EXACT' && (
+                  <span
+                    className={cn(
+                      Math.abs(exactRemaining) > 0.01
+                        ? 'text-danger'
+                        : 'text-success'
+                    )}
+                  >
+                    ${exactRemaining.toFixed(2)} unassigned
+                  </span>
+                )}
+              </div>
 
-              {splitType === 'EXACT' && (
-                <>
-                  {members.map((m) => (
-                    <div
-                      key={m.id}
-                      className="mb-2 flex items-center justify-between gap-2"
-                    >
-                      <span className="text-sm">{memberLabel(m)}</span>
+              {members.map((m) => {
+                const on = isChecked(m.id);
+                const w = weightOf(m.id);
+                const share = weightSum > 0 && on ? (w / weightSum) * 100 : 0;
+                return (
+                  <div
+                    key={m.id}
+                    className="mb-2 flex items-center justify-between gap-2"
+                  >
+                    <label className="flex min-w-0 items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => toggleChecked(m.id)}
+                        className="h-4 w-4 shrink-0 accent-brand-500"
+                      />
+                      <span className={cn('truncate', !on && 'text-muted line-through')}>
+                        {memberLabel(m)}
+                      </span>
+                    </label>
+
+                    {!on ? (
+                      <span className="text-xs text-muted">excluded</span>
+                    ) : splitType === 'EQUAL' ? (
+                      <span className="text-xs text-muted">even share</span>
+                    ) : splitType === 'EXACT' ? (
                       <input
                         type="number"
                         step="0.01"
@@ -444,28 +545,7 @@ export default function GroupDetail() {
                         }
                         className="w-28"
                       />
-                    </div>
-                  ))}
-                  <p
-                    className={cn(
-                      'mt-1 text-sm',
-                      Math.abs(exactRemaining) > 0.01 ? 'text-danger' : 'text-success'
-                    )}
-                  >
-                    Assigned ${exactAssigned.toFixed(2)} of ${total.toFixed(2)} — $
-                    {exactRemaining.toFixed(2)} unassigned
-                  </p>
-                </>
-              )}
-
-              {splitType === 'PERCENTAGE' && (
-                <>
-                  {members.map((m) => (
-                    <div
-                      key={m.id}
-                      className="mb-2 flex items-center justify-between gap-2"
-                    >
-                      <span className="text-sm">{memberLabel(m)}</span>
+                    ) : splitType === 'PERCENTAGE' ? (
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
@@ -481,52 +561,26 @@ export default function GroupDetail() {
                         />
                         <span className="text-muted">%</span>
                       </div>
-                    </div>
-                  ))}
-                  <p
-                    className={cn(
-                      'mt-1 text-sm',
-                      Math.abs(percentRemaining) > 0.01
-                        ? 'text-danger'
-                        : 'text-success'
-                    )}
-                  >
-                    {percentRemaining.toFixed(2)}% remaining (of 100%)
-                  </p>
-                </>
-              )}
-
-              {splitType === 'WEIGHT' && (
-                <>
-                  {members.map((m) => {
-                    const w = weightOf(m.id);
-                    const share = weightSum > 0 ? (w / weightSum) * 100 : 0;
-                    return (
-                      <div
-                        key={m.id}
-                        className="mb-2 flex items-center justify-between gap-2"
-                      >
-                        <span className="text-sm">{memberLabel(m)}</span>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={weights[m.id] ?? '1'}
-                            onChange={(e) =>
-                              setWeights((p) => ({ ...p, [m.id]: e.target.value }))
-                            }
-                            className="w-20"
-                          />
-                          <span className="text-xs text-muted">
-                            ≈ {share.toFixed(1)}% of total
-                          </span>
-                        </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={weights[m.id] ?? '1'}
+                          onChange={(e) =>
+                            setWeights((p) => ({ ...p, [m.id]: e.target.value }))
+                          }
+                          className="w-20"
+                        />
+                        <span className="text-xs text-muted">
+                          ≈ {share.toFixed(1)}%
+                        </span>
                       </div>
-                    );
-                  })}
-                </>
-              )}
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -595,6 +649,12 @@ export default function GroupDetail() {
           )}
         </section>
       </div>
+
+      <SettleUpModal
+        intent={settleIntent}
+        onClose={() => setSettleIntent(null)}
+        onSettled={() => refreshBalances()}
+      />
     </div>
   );
 }

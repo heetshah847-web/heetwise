@@ -1,11 +1,12 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, Users, Coins, BarChart3, LogOut } from 'lucide-react';
+import { Home, Users, Coins, BarChart3, Inbox, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { cn } from '../lib/cn.js';
 
 const LINKS = [
   { to: '/', label: 'Dashboard', icon: Home, end: true },
   { to: '/groups', label: 'Groups', icon: Users },
+  { to: '/requests', label: 'Requests', icon: Inbox },
   { to: '/currencies', label: 'Currencies', icon: Coins },
   { to: '/dashboard/stats', label: 'Your stats', icon: BarChart3 },
 ];

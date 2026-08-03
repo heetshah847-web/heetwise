@@ -44,11 +44,30 @@ export const api = {
 
   // Groups
   listGroups: () => request('/groups'),
-  createGroup: (name) => request('/groups', { method: 'POST', body: { name } }),
+  createGroup: (name, description) =>
+    request('/groups', { method: 'POST', body: { name, description } }),
   getGroup: (groupId) => request(`/groups/${groupId}`),
+  // Adding a member now sends an INVITATION (the user joins after accepting).
   addMember: (groupId, email) =>
-    request(`/groups/${groupId}/members`, { method: 'POST', body: { email } }),
+    request(`/groups/${groupId}/invitations`, { method: 'POST', body: { email } }),
+  inviteToGroup: (groupId, email) =>
+    request(`/groups/${groupId}/invitations`, { method: 'POST', body: { email } }),
   getBalances: (groupId) => request(`/groups/${groupId}/balances`),
+  createSettlement: (groupId, { fromUserId, toUserId, amountCents, currency }) =>
+    request(`/groups/${groupId}/settlements`, {
+      method: 'POST',
+      body: { fromUserId, toUserId, amountCents, currency },
+    }),
+
+  // Invitations (invitee-facing)
+  getPendingInvitations: () => request('/invitations/pending'),
+  acceptInvitation: (invitationId) =>
+    request(`/invitations/${invitationId}/accept`, { method: 'POST' }),
+  declineInvitation: (invitationId) =>
+    request(`/invitations/${invitationId}/decline`, { method: 'POST' }),
+
+  // Notifications (unsettled debts older than 7 days)
+  getNotifications: () => request('/notifications'),
 
   // Expenses
   listExpenses: (groupId, { cursor, limit } = {}) => {

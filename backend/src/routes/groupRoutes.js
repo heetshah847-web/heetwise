@@ -6,7 +6,6 @@ import {
   getGroup,
   updateGroup,
   deleteGroup,
-  addMember,
   getBalances,
 } from '../controllers/groupController.js';
 import {
@@ -16,6 +15,8 @@ import {
   updateExpense,
   deleteExpense,
 } from '../controllers/expenseController.js';
+import { createInvitation } from '../controllers/invitationController.js';
+import { createSettlement } from '../controllers/settlementController.js';
 import { validateSplit } from '../middleware/validateSplit.js';
 import { requireGroupMember } from '../middleware/requireGroupMember.js';
 import { requireExpenseOwnership } from '../middleware/requireExpenseOwnership.js';
@@ -40,11 +41,15 @@ router.get('/:groupId', getGroup);
 router.patch('/:groupId', requireGroupMember, updateGroup);
 router.delete('/:groupId', requireGroupMember, deleteGroup);
 
-// Membership (mutation → 403 guard)
-router.post('/:groupId/members', requireGroupMember, addMember);
+// Membership: adding a member now creates an INVITATION rather than joining the
+// user directly — they appear in the group only after they accept. Both the
+// legacy /members path and the explicit /invitations path create an invitation.
+router.post('/:groupId/members', requireGroupMember, createInvitation);
+router.post('/:groupId/invitations', requireGroupMember, createInvitation);
 
 // Balances + settlements (read → 404 via controller)
 router.get('/:groupId/balances', getBalances);
+router.post('/:groupId/settlements', requireGroupMember, createSettlement);
 
 // Expenses (nested under a group)
 router.post(

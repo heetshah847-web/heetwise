@@ -8,9 +8,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  
-  
-
+  // Runtime queries go through the pg driver adapter (src/lib/prisma.js). The
+  // Prisma CLI (migrate/studio) reads its connection URL from prisma.config.ts.
 }
 
 model User {
@@ -28,6 +27,12 @@ model User {
   expensesCreated Expense[]     @relation("ExpenseCreator")
   splits          Split[]
 
+  // Invitations + settlements
+  invitationsSent     GroupInvitation[] @relation("InvitationInviter")
+  invitationsReceived GroupInvitation[] @relation("InvitationInvitee")
+  settlementsFrom     Settlement[]      @relation("SettlementFrom")
+  settlementsTo       Settlement[]      @relation("SettlementTo")
+
   @@map("users")
 }
 
@@ -35,13 +40,18 @@ model User {
 model Group {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
+  // Optional free-text description shown to invitees when they receive a
+  // group invitation. Nullable; existing groups keep NULL.
+  description String?
   createdById String   @map("created_by_id") @db.Uuid
   createdBy   User     @relation("GroupCreator", fields: [createdById], references: [id])
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  members  GroupMember[]
-  expenses Expense[]
+  members     GroupMember[]
+  expenses    Expense[]
+  invitations GroupInvitation[]
+  settlements Settlement[]
 
   @@index([createdById])
   @@map("groups")
@@ -131,4 +141,56 @@ model ExchangeRate {
   @@unique([fromCurrency, toCurrency, fetchedDate])
   @@index([fromCurrency, toCurrency, fetchedAt])
   @@map("exchange_rates")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+// An invitation asking someone (by email) to join a group. Replaces the old
+// "add member directly" flow — a member is only added once they accept.
+model GroupInvitation {
+  id            String           @id @default(uuid()) @db.Uuid
+  groupId       String           @map("group_id") @db.Uuid
+  invitedEmail  String           @map("invited_email")
+  // Set when the invited email already matches a registered user (nullable —
+  // you can invite someone who hasn't signed up yet).
+  invitedUserId String?          @map("invited_user_id") @db.Uuid
+  invitedById   String           @map("invited_by_id") @db.Uuid
+  status        InvitationStatus @default(PENDING)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  expiresAt     DateTime         @map("expires_at")
+
+  group       Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  invitedBy   User  @relation("InvitationInviter", fields: [invitedById], references: [id])
+  invitedUser User? @relation("InvitationInvitee", fields: [invitedUserId], references: [id])
+
+  @@index([invitedEmail, status])
+  @@index([groupId])
+  @@map("group_invitations")
+}
+
+// A recorded payment settling a debt between two group members. Balances are
+// still computed from expenses; settlements are the audit trail of who paid
+// whom and drive the "unsettled debt" notifications.
+model Settlement {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  fromUserId  String   @map("from_user_id") @db.Uuid
+  toUserId    String   @map("to_user_id") @db.Uuid
+  amountCents Int      @map("amount_cents")
+  currency    String   @default("USD")
+  settledAt   DateTime @default(now()) @map("settled_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  fromUser User  @relation("SettlementFrom", fields: [fromUserId], references: [id])
+  toUser   User  @relation("SettlementTo", fields: [toUserId], references: [id])
+
+  @@index([groupId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@map("settlements")
 }

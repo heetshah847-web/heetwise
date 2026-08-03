@@ -51,6 +51,8 @@ export default function AddExpenseWizard({
   const [exactAmounts, setExactAmounts] = useState({});
   const [percentages, setPercentages] = useState({});
   const [weights, setWeights] = useState({});
+  // Ticked members participate in the split (everyone ticked by default).
+  const [checked, setChecked] = useState({});
 
   const [rates, setRates] = useState({});
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
@@ -74,14 +76,18 @@ export default function AddExpenseWizard({
   }, [groupId]);
 
   const members = group?.members ?? [];
+  const isChecked = (id) => checked[id] !== false; // default ticked
+  const tickedMembers = members.filter((m) => isChecked(m.id));
+  const toggleChecked = (id) =>
+    setChecked((p) => ({ ...p, [id]: p[id] === false }));
   const total = Number(amount) || 0;
   const rate = currency === 'USD' ? 1 : rates[currency] || 0;
   const usdPreview = total * rate;
   const weightOf = (id) => Number(weights[id] ?? '1');
 
-  const exactAssigned = members.reduce((s, m) => s + (Number(exactAmounts[m.id]) || 0), 0);
-  const percentTotal = members.reduce((s, m) => s + (Number(percentages[m.id]) || 0), 0);
-  const weightSum = members.reduce((s, m) => s + weightOf(m.id), 0);
+  const exactAssigned = tickedMembers.reduce((s, m) => s + (Number(exactAmounts[m.id]) || 0), 0);
+  const percentTotal = tickedMembers.reduce((s, m) => s + (Number(percentages[m.id]) || 0), 0);
+  const weightSum = tickedMembers.reduce((s, m) => s + weightOf(m.id), 0);
 
   const step1Reason = useMemo(() => {
     if (!groupId) return 'Pick a group';
@@ -92,15 +98,16 @@ export default function AddExpenseWizard({
 
   const step2Reason = useMemo(() => {
     if (!members.length) return 'Group has no members';
+    if (!tickedMembers.length) return 'Select at least one member to split with';
     if (splitType === 'EXACT' && Math.abs(total - exactAssigned) > 0.01)
       return `Exact amounts must sum to ${formatMoney(total, currency)}`;
     if (splitType === 'PERCENTAGE' && Math.abs(100 - percentTotal) > 0.01)
       return 'Percentages must total 100%';
-    if (splitType === 'WEIGHT' && members.some((m) => !(weightOf(m.id) > 0)))
+    if (splitType === 'WEIGHT' && tickedMembers.some((m) => !(weightOf(m.id) > 0)))
       return 'Every weight must be greater than 0';
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, splitType, total, exactAssigned, percentTotal, weights, currency]);
+  }, [members, tickedMembers, splitType, total, exactAssigned, percentTotal, weights, currency]);
 
   function go(next) {
     setDir(next > step ? 1 : -1);
@@ -108,7 +115,8 @@ export default function AddExpenseWizard({
   }
 
   function buildMembers() {
-    return members.map((m) => {
+    // Only ticked members are part of the split.
+    return tickedMembers.map((m) => {
       if (splitType === 'EXACT') return { userId: m.id, amount: Number(exactAmounts[m.id]) || 0 };
       if (splitType === 'PERCENTAGE') return { userId: m.id, percentage: Number(percentages[m.id]) || 0 };
       if (splitType === 'WEIGHT') return { userId: m.id, weight: weightOf(m.id) };
@@ -274,49 +282,86 @@ export default function AddExpenseWizard({
                   animate={{ opacity: 1, y: 0 }}
                   className="space-y-2"
                 >
-                  {members.map((m) => (
-                    <div key={m.id} className="flex items-center justify-between gap-2">
-                      <span className="text-sm">{m.name || m.email}</span>
-                      {splitType === 'EXACT' && (
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={exactAmounts[m.id] ?? ''}
-                          onChange={(e) =>
-                            setExactAmounts((p) => ({ ...p, [m.id]: e.target.value }))
-                          }
-                          className="w-24 rounded-lg border border-border px-2 py-1 text-sm"
-                        />
-                      )}
-                      {splitType === 'PERCENTAGE' && (
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0"
-                          value={percentages[m.id] ?? ''}
-                          onChange={(e) =>
-                            setPercentages((p) => ({ ...p, [m.id]: e.target.value }))
-                          }
-                          className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
-                        />
-                      )}
-                      {splitType === 'WEIGHT' && (
-                        <input
-                          type="number"
-                          step="1"
-                          value={weights[m.id] ?? '1'}
-                          onChange={(e) =>
-                            setWeights((p) => ({ ...p, [m.id]: e.target.value }))
-                          }
-                          className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
-                        />
-                      )}
-                      {splitType === 'EQUAL' && (
-                        <span className="text-xs text-muted">even share</span>
-                      )}
-                    </div>
-                  ))}
+                  <div className="flex items-center justify-between text-xs text-muted">
+                    <span>Split between ({tickedMembers.length} selected)</span>
+                    {splitType === 'PERCENTAGE' && (
+                      <span
+                        className={cn(
+                          Math.abs(100 - percentTotal) > 0.01
+                            ? 'text-danger'
+                            : 'text-success'
+                        )}
+                      >
+                        {(100 - percentTotal).toFixed(2)}% remaining
+                      </span>
+                    )}
+                    {splitType === 'EXACT' && (
+                      <span
+                        className={cn(
+                          Math.abs(total - exactAssigned) > 0.01
+                            ? 'text-danger'
+                            : 'text-success'
+                        )}
+                      >
+                        {formatMoney(total - exactAssigned, currency)} left
+                      </span>
+                    )}
+                  </div>
+                  {members.map((m) => {
+                    const on = isChecked(m.id);
+                    return (
+                      <div key={m.id} className="flex items-center justify-between gap-2">
+                        <label className="flex min-w-0 items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => toggleChecked(m.id)}
+                            className="h-4 w-4 shrink-0 accent-brand-500"
+                          />
+                          <span className={cn('truncate', !on && 'text-muted line-through')}>
+                            {m.name || m.email}
+                          </span>
+                        </label>
+                        {!on ? (
+                          <span className="text-xs text-muted">excluded</span>
+                        ) : splitType === 'EXACT' ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={exactAmounts[m.id] ?? ''}
+                            onChange={(e) =>
+                              setExactAmounts((p) => ({ ...p, [m.id]: e.target.value }))
+                            }
+                            className="w-24 rounded-lg border border-border px-2 py-1 text-sm"
+                          />
+                        ) : splitType === 'PERCENTAGE' ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="0"
+                            value={percentages[m.id] ?? ''}
+                            onChange={(e) =>
+                              setPercentages((p) => ({ ...p, [m.id]: e.target.value }))
+                            }
+                            className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
+                          />
+                        ) : splitType === 'WEIGHT' ? (
+                          <input
+                            type="number"
+                            step="1"
+                            value={weights[m.id] ?? '1'}
+                            onChange={(e) =>
+                              setWeights((p) => ({ ...p, [m.id]: e.target.value }))
+                            }
+                            className="w-20 rounded-lg border border-border px-2 py-1 text-sm"
+                          />
+                        ) : (
+                          <span className="text-xs text-muted">even share</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </motion.div>
                 {step2Reason && (
                   <p className="text-sm text-danger">{step2Reason}</p>
@@ -356,7 +401,7 @@ export default function AddExpenseWizard({
                         v={memberLabel(members.find((m) => m.id === paidById) || {})}
                       />
                       <Row k="Split" v={SPLIT_CARDS.find((c) => c.value === splitType)?.label} />
-                      <Row k="Members" v={`${members.length}`} />
+                      <Row k="Members" v={`${tickedMembers.length} of ${members.length}`} />
                     </dl>
                   </div>
                 )}

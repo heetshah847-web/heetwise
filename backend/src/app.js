@@ -6,8 +6,10 @@ import { env } from './config/env.js';
 import authRoutes from './routes/authRoutes.js';
 import groupRoutes from './routes/groupRoutes.js';
 import statsRoutes from './routes/stats.js';
+import invitationRoutes from './routes/invitationRoutes.js';
 import { requireAuth } from './middleware/auth.js';
 import { me } from './controllers/authController.js';
+import { getNotifications } from './controllers/notificationController.js';
 import {
   getCurrencies,
   getRatesMeta,
@@ -26,13 +28,14 @@ export function createApp() {
   // X-XSS-Protection, Content-Security-Policy, etc. with zero config.
   app.use(helmet());
 
-  // CORS locked to the single allowed frontend origin (FRONTEND_URL). Requests
-  // with no Origin header (server-to-server, curl, tests) are allowed; any
-  // other browser origin is rejected (mapped to 403 in the error handler).
+  // CORS locked to the allowed frontend origins (FRONTEND_URL, which may be a
+  // comma-separated list). Requests with no Origin header (server-to-server,
+  // curl, tests) are allowed; any other browser origin is rejected (mapped to
+  // 403 in the error handler).
   app.use(
     cors({
       origin: (origin, cb) => {
-        if (!origin || origin === env.frontendUrl) return cb(null, true);
+        if (!origin || env.frontendUrls.includes(origin)) return cb(null, true);
         return cb(new Error('Not allowed by CORS'));
       },
       credentials: true,
@@ -51,8 +54,14 @@ export function createApp() {
   // Top-level /me test endpoint that returns the current user from token.
   app.get('/me', requireAuth, me);
 
-  // Smart-split domain: groups, members, expenses, balances.
+  // Smart-split domain: groups, members, expenses, balances, settlements.
   app.use('/groups', groupRoutes);
+
+  // Group invitations (invitee-facing): list pending, accept, decline.
+  app.use('/invitations', invitationRoutes);
+
+  // Notifications: unsettled debts older than 7 days for the current user.
+  app.get('/notifications', requireAuth, getNotifications);
 
   // Multi-currency: available currencies + latest rates (display only).
   app.get('/currencies', requireAuth, getCurrencies);

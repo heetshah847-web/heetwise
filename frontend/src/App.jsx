@@ -9,10 +9,12 @@ import GroupStats from './pages/GroupStats.jsx';
 import MemberStats from './pages/MemberStats.jsx';
 import MyStats from './pages/MyStats.jsx';
 import Currencies from './pages/Currencies.jsx';
+import Requests from './pages/Requests.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import PageTransition from './components/PageTransition.jsx';
 import Fab from './components/Fab.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import NotificationBell from './components/NotificationBell.jsx';
 import { useAuth } from './context/AuthContext.jsx';
 
 // Wraps a page in route-change animation + (for app pages) the auth guard.
@@ -38,6 +40,7 @@ function AnimatedRoutes() {
         />
         <Route path="/dashboard/stats" element={page(<MyStats />)} />
         <Route path="/currencies" element={page(<Currencies />)} />
+        <Route path="/requests" element={page(<Requests />)} />
       </Routes>
     </AnimatePresence>
   );
@@ -49,6 +52,8 @@ export default function App() {
     <>
       {/* Sidebar + content offset only when signed in (no routing change). */}
       {user && <Sidebar />}
+      {/* Header notification bell, only when signed in. */}
+      {user && <NotificationBell />}
       <div className={user ? 'md:pl-60' : ''}>
         <AnimatedRoutes />
       </div>
